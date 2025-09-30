@@ -152,7 +152,7 @@ if st.sidebar.button("Reset / Nouvelle session"):
     st.session_state.history_df = st.session_state.history_df.iloc[0:0]
     st.session_state.past_results = []
     st.session_state.history_finished = False
-    st.experimental_rerun()
+    st.success("Session réinitialisée.")
 
 st.sidebar.write(f"Bankroll: {bot.bankroll:.2f}$")
 st.sidebar.write(f"Dernier bonus exclu: {bot.last_bonus or '—'}")
@@ -171,7 +171,7 @@ if not history_finished:
     st.write(f"Total spins saisis: {len(past_results)}")
     if st.button("Historique terminé / Live spin"):
         st.session_state.history_finished = True
-        st.experimental_rerun()
+        st.success("Historique terminé. Maintenant le bot peut suggérer les mises.")
 else:
     st.subheader("Mises suggérées pour le prochain spin")
     suggestion, strategies = bot.suggest_bet(past_results)
