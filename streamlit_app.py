@@ -45,7 +45,44 @@ def compute_probabilities(history):
     return probs
 
 # -----------------------------
-# Définition stratégies avec probabilité attendue
+# Stratégies
+# -----------------------------
+def martingale_one(bankroll):
+    unit = get_unit(bankroll)
+    mise = unit * (2 ** st.session_state.martingale_loss)
+    return {"1": round(mise,2)}
+
+def god_mode(bankroll, probs=None):
+    unit = get_unit(bankroll)
+    return {"2": 2*unit, "5": 1*unit, "10": 1*unit}
+
+def god_mode_bonus(bankroll, probs=None):
+    unit = get_unit(bankroll)
+    # Pondération relative : 2>5&10>bonus
+    total_units = unit * 2 + unit*1 + unit*1 + 4*unit*0.2
+    strat = {}
+    strat["2"] = 0.8*unit
+    strat["5"] = 0.4*unit
+    strat["10"] = 0.4*unit
+    for bonus in ["Coin Flip","Cash Hunt","Pachinko","Crazy Time"]:
+        if st.session_state.skip_bonus == bonus: continue
+        strat[bonus] = 0.2*unit
+    return strat
+
+def one_plus_bonus(bankroll, probs=None):
+    unit = get_unit(bankroll)
+    strat = {}
+    # Calcul autres mises selon probabilité
+    for seg in ["Coin Flip","Cash Hunt","Pachinko","Crazy Time"]:
+        if st.session_state.skip_bonus == seg: continue
+        strat[seg] = 0.5*unit
+    # Mise sur 1 = 1/2 total des autres mises
+    total_other = sum(strat.values())
+    strat["1"] = round(total_other/2,2)
+    return strat
+
+# -----------------------------
+# Choisir stratégie
 # -----------------------------
 def expected_profit(strategy, probs):
     profit = 0
@@ -55,48 +92,22 @@ def expected_profit(strategy, probs):
         elif seg == "2": mult = 3
         elif seg == "5": mult = 6
         elif seg == "10": mult = 11
-        # bonus par défaut mult=1, sera ajusté manuellement
-        profit += mise * (mult) * probs.get(seg,0)
+        # bonus par défaut = 1
+        profit += mise*mult*probs.get(seg,0)
     return profit
 
-def martingale_one(bankroll):
-    unit = get_unit(bankroll)
-    mise = unit * (2 ** st.session_state.martingale_loss)
-    return {"1": round(mise,2)}
-
-def god_mode(bankroll):
-    unit = get_unit(bankroll)
-    return {"2": 2*unit, "5": 1*unit, "10":1*unit}
-
-def god_mode_bonus(bankroll):
-    unit = get_unit(bankroll)
-    strat = {"2": 2*unit, "5":1*unit, "10":1*unit}
-    for bonus in ["Coin Flip","Cash Hunt","Pachinko","Crazy Time"]:
-        if st.session_state.skip_bonus == bonus: continue
-        strat[bonus] = 1*unit
-    return strat
-
-def one_plus_bonus(bankroll):
-    unit = get_unit(bankroll)
-    strat = {"1":1*unit}
-    for bonus in ["Coin Flip","Cash Hunt","Pachinko","Crazy Time"]:
-        if st.session_state.skip_bonus == bonus: continue
-        strat[bonus] = 1*unit
-    return strat
-
-# -----------------------------
-# Choisir stratégie
-# -----------------------------
 def choose_strategy(history, bankroll):
     # Martingale prioritaire
     if st.session_state.martingale_loss > 0:
         return martingale_one(bankroll)
     
-    # Calcul proba
     probs = compute_probabilities(history)
-    
-    # Générer toutes les stratégies
-    strategies = [god_mode(bankroll), god_mode_bonus(bankroll), one_plus_bonus(bankroll)]
+    strategies = [
+        god_mode(bankroll, probs),
+        god_mode_bonus(bankroll, probs),
+        one_plus_bonus(bankroll, probs)
+    ]
+    # Choisir stratégie avec profit attendu max
     best = None
     best_profit = -1
     for strat in strategies:
@@ -107,24 +118,24 @@ def choose_strategy(history, bankroll):
     return best
 
 # -----------------------------
-# Calcul gain réel
+# Calcul gain
 # -----------------------------
 def calculate_gain(spin, strategy):
     gain = 0
-    spin_parts = spin.split("x")
-    seg = spin_parts[0].strip()
-    mult = int(spin_parts[1]) if len(spin_parts)>1 else 1
+    parts = spin.split("x")
+    seg = parts[0].strip()
+    mult = int(parts[1]) if len(parts)>1 else 1
     for bet_seg, mise in strategy.items():
         if bet_seg == seg:
-            if seg == "1": gain += mise*2
-            elif seg == "2": gain += mise*3
-            elif seg == "5": gain += mise*6
-            elif seg == "10": gain += mise*11
+            if seg=="1": gain += mise*2
+            elif seg=="2": gain += mise*3
+            elif seg=="5": gain += mise*6
+            elif seg=="10": gain += mise*11
             else: gain += mise*(mult+1)
     return gain
 
 # -----------------------------
-# Affichage stratégie
+# Affichage
 # -----------------------------
 def display_suggestion(strategy):
     st.subheader("💡 Suggestion Prochain Spin")
@@ -177,5 +188,4 @@ if st.button("Résultat Spin Live"):
         # Nouvelle stratégie
         st.session_state.last_strategy = choose_strategy(st.session_state.history, st.session_state.bankroll)
 
-# Affichage sous Spin Live
 display_suggestion(st.session_state.last_strategy)
