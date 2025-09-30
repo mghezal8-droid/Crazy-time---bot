@@ -1,7 +1,6 @@
 import streamlit as st
 import pandas as pd
 import random
-import math
 
 # -----------------------------
 # Config
@@ -14,7 +13,7 @@ st.set_page_config(page_title="Crazy Time Bot", layout="centered")
 if "history" not in st.session_state:
     st.session_state.history = []
 if "bankroll" not in st.session_state:
-    st.session_state.bankroll = 100
+    st.session_state.bankroll = 100.0
 if "last_strategy" not in st.session_state:
     st.session_state.last_strategy = None
 if "skip_bonus" not in st.session_state:
@@ -46,7 +45,7 @@ def get_unit(bankroll):
 def martingale_one(bankroll):
     unit = get_unit(bankroll)
     mise = unit * (2 ** st.session_state.martingale_loss)
-    return {"1": mise}
+    return {"1": round(mise,2)}
 
 def god_mode(bankroll):
     unit = get_unit(bankroll)
@@ -112,7 +111,7 @@ def calculate_gain(spin, strategy):
             elif seg == "10":
                 gain += mise * 11
             else:  # Bonus
-                gain += mise * (mult + 1)  # mise + (mise × multiplicateur)
+                gain += mise * (mult + 1)  # (mise × multiplicateur) + mise
     return gain
 
 # -----------------------------
@@ -132,7 +131,13 @@ def display_suggestion(strategy):
 st.title("🎡 Crazy Time Bot")
 
 st.sidebar.header("⚙️ Paramètres")
-st.session_state.bankroll = st.sidebar.number_input("Bankroll initiale ($)", 50, 1000, st.session_state.bankroll)
+st.session_state.bankroll = st.sidebar.number_input(
+    "Bankroll initiale ($)", 
+    min_value=50.0, 
+    max_value=1000.0, 
+    value=float(st.session_state.bankroll), 
+    step=1.0
+)
 
 st.subheader("📜 Historique des Spins")
 new_spin = st.text_input("Entre un résultat (ex: 1, 2, 5, 10, Coin Flip, Pachinko, Crazy Time):")
