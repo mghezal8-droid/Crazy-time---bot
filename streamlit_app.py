@@ -19,6 +19,10 @@ if "skip_bonus" not in st.session_state:
     st.session_state.skip_bonus = None
 if "martingale_loss" not in st.session_state:
     st.session_state.martingale_loss = 0
+if "strategy_repeat_count" not in st.session_state:
+    st.session_state.strategy_repeat_count = 0
+if "last_strategy_name" not in st.session_state:
+    st.session_state.last_strategy_name = None
 
 # -----------------------------
 # Fonction unité minimale
@@ -50,16 +54,14 @@ def compute_probabilities(history):
 def martingale_one(bankroll):
     unit = get_unit(bankroll)
     mise = unit * (2 ** st.session_state.martingale_loss)
-    return {"1": round(mise,2)}
+    return {"1": round(mise,2)}, "Martingale 1"
 
-def god_mode(bankroll, probs=None):
+def god_mode(bankroll):
     unit = get_unit(bankroll)
-    return {"2": 2*unit, "5": 1*unit, "10": 1*unit}
+    return {"2": 2*unit, "5": 1*unit, "10": 1*unit}, "God Mode"
 
-def god_mode_bonus(bankroll, probs=None):
+def god_mode_bonus(bankroll):
     unit = get_unit(bankroll)
-    # Pondération relative : 2>5&10>bonus
-    total_units = unit * 2 + unit*1 + unit*1 + 4*unit*0.2
     strat = {}
     strat["2"] = 0.8*unit
     strat["5"] = 0.4*unit
@@ -67,19 +69,17 @@ def god_mode_bonus(bankroll, probs=None):
     for bonus in ["Coin Flip","Cash Hunt","Pachinko","Crazy Time"]:
         if st.session_state.skip_bonus == bonus: continue
         strat[bonus] = 0.2*unit
-    return strat
+    return strat, "God Mode + Bonus"
 
-def one_plus_bonus(bankroll, probs=None):
+def one_plus_bonus(bankroll):
     unit = get_unit(bankroll)
     strat = {}
-    # Calcul autres mises selon probabilité
-    for seg in ["Coin Flip","Cash Hunt","Pachinko","Crazy Time"]:
-        if st.session_state.skip_bonus == seg: continue
-        strat[seg] = 0.5*unit
-    # Mise sur 1 = 1/2 total des autres mises
+    for bonus in ["Coin Flip","Cash Hunt","Pachinko","Crazy Time"]:
+        if st.session_state.skip_bonus == bonus: continue
+        strat[bonus] = 0.5*unit
     total_other = sum(strat.values())
     strat["1"] = round(total_other/2,2)
-    return strat
+    return strat, "1 + Bonus"
 
 # -----------------------------
 # Choisir stratégie
@@ -92,30 +92,39 @@ def expected_profit(strategy, probs):
         elif seg == "2": mult = 3
         elif seg == "5": mult = 6
         elif seg == "10": mult = 11
-        # bonus par défaut = 1
         profit += mise*mult*probs.get(seg,0)
     return profit
 
 def choose_strategy(history, bankroll):
     # Martingale prioritaire
     if st.session_state.martingale_loss > 0:
-        return martingale_one(bankroll)
+        strategy, name = martingale_one(bankroll)
+        st.session_state.strategy_repeat_count = 0
+        st.session_state.last_strategy_name = name
+        return strategy, name
     
     probs = compute_probabilities(history)
-    strategies = [
-        god_mode(bankroll, probs),
-        god_mode_bonus(bankroll, probs),
-        one_plus_bonus(bankroll, probs)
-    ]
-    # Choisir stratégie avec profit attendu max
+    strategies = [god_mode(bankroll), god_mode_bonus(bankroll), one_plus_bonus(bankroll)]
+    strategy_names = ["God Mode", "God Mode + Bonus", "1 + Bonus"]
+    
     best = None
     best_profit = -1
-    for strat in strategies:
-        profit = expected_profit(strat, probs)
+    best_name = None
+    for strat, name in zip(strategies, strategy_names):
+        # Limite répétition : si même stratégie répétée >2 tours, on réduit artificiellement profit
+        repeat_penalty = 0.9 if name == st.session_state.last_strategy_name and st.session_state.strategy_repeat_count >=2 else 1
+        profit = expected_profit(strat, probs) * repeat_penalty
         if profit > best_profit:
             best_profit = profit
             best = strat
-    return best
+            best_name = name
+    # Mettre à jour répétition
+    if best_name == st.session_state.last_strategy_name:
+        st.session_state.strategy_repeat_count +=1
+    else:
+        st.session_state.strategy_repeat_count = 0
+    st.session_state.last_strategy_name = best_name
+    return best, best_name
 
 # -----------------------------
 # Calcul gain
@@ -131,14 +140,14 @@ def calculate_gain(spin, strategy):
             elif seg=="2": gain += mise*3
             elif seg=="5": gain += mise*6
             elif seg=="10": gain += mise*11
-            else: gain += mise*(mult+1)
+            else: gain += mise*mult + mise
     return gain
 
 # -----------------------------
 # Affichage
 # -----------------------------
-def display_suggestion(strategy):
-    st.subheader("💡 Suggestion Prochain Spin")
+def display_suggestion(strategy, name):
+    st.subheader(f"💡 Suggestion Prochain Spin : {name}")
     if not strategy:
         st.info("Aucune stratégie pour l'instant.")
         return
@@ -163,7 +172,7 @@ if st.button("Ajouter à l'historique"):
         st.success(f"Ajouté : {new_spin}")
 
 if st.button("Historique terminé"):
-    st.session_state.last_strategy = choose_strategy(st.session_state.history, st.session_state.bankroll)
+    st.session_state.last_strategy, _ = choose_strategy(st.session_state.history, st.session_state.bankroll)
 
 st.write(pd.DataFrame(st.session_state.history))
 
@@ -186,6 +195,6 @@ if st.button("Résultat Spin Live"):
         st.success(f"Résultat {live_spin} → Gain {round(gain,2)} | Bankroll: {round(st.session_state.bankroll,2)}")
 
         # Nouvelle stratégie
-        st.session_state.last_strategy = choose_strategy(st.session_state.history, st.session_state.bankroll)
+        st.session_state.last_strategy, _ = choose_strategy(st.session_state.history, st.session_state.bankroll)
 
-display_suggestion(st.session_state.last_strategy)
+display_suggestion(st.session_state.last_strategy, st.session_state.last_strategy_name)
