@@ -10,7 +10,6 @@ st.set_page_config(page_title="Crazy Time Bot", layout="wide")
 # CONSTANTES
 # -----------------------
 MIN_BETS = [0.2, 0.4, 1, 2, 4, 10]
-
 WHEEL = {
     "1": (21, 2),
     "2": (13, 3),
@@ -21,13 +20,7 @@ WHEEL = {
     "CashHunt": (2, 0),
     "CrazyTime": (1, 0)
 }
-
-BONUS_MULTIPLIERS = {
-    "CoinFlip": 2.5,
-    "Pachinko": 3,
-    "CashHunt": 4,
-    "CrazyTime": 5
-}
+BONUS_MULTIPLIERS = {"CoinFlip": 2.5, "Pachinko": 3, "CashHunt": 4, "CrazyTime": 5}
 
 def adjust_to_minimum(stake):
     for m in MIN_BETS:
@@ -47,7 +40,10 @@ class CrazyTimeBot:
 
     def suggest_bet(self, past_results):
         bet_suggestion = {}
-        last_spin = past_results[-1] if past_results else None
+        if not past_results:
+            return bet_suggestion
+
+        last_spin = past_results[-1]
 
         # Martingale sur 1
         if last_spin == "1":
@@ -59,7 +55,7 @@ class CrazyTimeBot:
         if self.bankroll >= self.martingale_bet_1:
             bet_suggestion["1"] = self.martingale_bet_1
 
-        # God Mode sur 2,5,10 + bonus
+        # God Mode sur 2,5,10 + bonus (sauf dernier bonus)
         god_targets = ["2","5","10"]
         remaining_bankroll = max(self.bankroll - sum(bet_suggestion.values()), 0)
         if remaining_bankroll >= MIN_BETS[0]:
@@ -136,8 +132,9 @@ past_results = st.session_state.past_results
 # INTERFACE
 # -----------------------
 st.title("Crazy Time Bot 🎰")
-st.sidebar.header("Contrôles session")
 
+# Réinitialisation
+st.sidebar.header("Contrôles session")
 if st.sidebar.button("Reset / Nouvelle session"):
     st.session_state.bot = CrazyTimeBot(120)
     st.session_state.history_df = st.session_state.history_df.iloc[0:0]
@@ -147,35 +144,46 @@ if st.sidebar.button("Reset / Nouvelle session"):
 st.sidebar.write(f"Bankroll actuelle: {bot.bankroll:.2f}$")
 st.sidebar.write(f"Dernier bonus (exclu): {bot.last_bonus or '—'}")
 
-st.subheader("Sélection du spin réel")
-spin_input = st.selectbox("Choisis le résultat du spin",
-                          ["","1","2","5","10","CoinFlip","Pachinko","CashHunt","CrazyTime"])
-
-suggestion = bot.suggest_bet(past_results)
-st.subheader("Mise suggérée pour le prochain spin")
-if not suggestion:
-    st.info("Ne pas miser (aucune mise recommandée selon les règles / bankroll).")
-else:
-    df_sugg = pd.DataFrame([{"Section":k,"Mise($)":round(v,2)} for k,v in suggestion.items()])
-    st.table(df_sugg)
-
-if spin_input:
-    result = bot.apply_spin(spin_input,suggestion)
-    past_results.append(spin_input)
-    st.session_state.history_df = pd.concat([st.session_state.history_df,pd.DataFrame([result])],ignore_index=True)
-
-    st.markdown(f"### Résultat du spin : {spin_input} — **{result['outcome']}**")
-    if result['outcome']=="HIT":
-        st.success(f"Gagné: {result['win_amount']:.2f}$")
+# -----------------------
+# Entrée de l'historique
+# -----------------------
+st.subheader("Entrée des résultats historiques")
+spin_input = st.selectbox("Choisir le résultat du spin", ["", "1","2","5","10","CoinFlip","Pachinko","CashHunt","CrazyTime"])
+if st.button("Ajouter au tableau"):
+    if spin_input:
+        past_results.append(spin_input)
+        st.success(f"Résultat '{spin_input}' ajouté à l'historique.")
     else:
-        st.error(f"Perdu: {result['total_bet']:.2f}$")
-    st.write(f"Bankroll après spin: {result['bankroll_after']:.2f}$")
+        st.warning("Veuillez sélectionner un résultat.")
 
-st.markdown("---")
+st.write(f"Résultats saisis: {len(past_results)} spins")
+
+# -----------------------
+# Affichage et calcul après historique complet
+# -----------------------
+if past_results:
+    st.subheader("Mises suggérées pour le prochain spin")
+    suggestion = bot.suggest_bet(past_results)
+    if not suggestion:
+        st.info("Ne pas miser (aucune mise recommandée selon les règles / bankroll).")
+    else:
+        df_sugg = pd.DataFrame([{"Section":k,"Mise($)":round(v,2)} for k,v in suggestion.items()])
+        st.table(df_sugg)
+
+    # Appliquer un spin (simuler le dernier pour tester)
+    if st.button("Appliquer le dernier spin saisi"):
+        last_spin = past_results[-1]
+        result = bot.apply_spin(last_spin, suggestion)
+        st.session_state.history_df = pd.concat([st.session_state.history_df,pd.DataFrame([result])],ignore_index=True)
+        st.success(f"Spin '{last_spin}' appliqué : {result['outcome']} — Bankroll: {result['bankroll_after']:.2f}$")
+
+# -----------------------
+# Historique
+# -----------------------
 st.subheader("Historique des spins")
 st.dataframe(st.session_state.history_df.tail(20), use_container_width=True)
 
-if len(st.session_state.history_df)>0:
+if not st.session_state.history_df.empty:
     fig, ax = plt.subplots(figsize=(8,3))
     ax.plot(st.session_state.history_df["bankroll_after"].astype(float).values)
     ax.set_title("Courbe de bankroll")
@@ -184,8 +192,7 @@ if len(st.session_state.history_df)>0:
     ax.grid(True)
     st.pyplot(fig)
 
-if not st.session_state.history_df.empty:
     csv = st.session_state.history_df.to_csv(index=False).encode('utf-8')
     st.download_button("Télécharger l'historique CSV", data=csv, file_name="crazytime_history.csv", mime="text/csv")
 
-st.caption("⚠️ Ce logiciel fournit des suggestions — utilisation à vos risques. Pour analyse / simulation seulement.")
+st.caption("⚠️ Suggestions de paris uniquement. Utilisation à vos risques.")
