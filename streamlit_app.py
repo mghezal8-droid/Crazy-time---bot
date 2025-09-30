@@ -1,26 +1,18 @@
 import streamlit as st
 import pandas as pd
-import numpy as np
 import matplotlib.pyplot as plt
 from datetime import datetime
 
-st.set_page_config(page_title="Crazy Time Bot", layout="wide")
+st.set_page_config(page_title="Crazy Time Bot Optimisé", layout="wide")
 
 # -----------------------
 # CONSTANTES
 # -----------------------
 MIN_BETS = [0.2, 0.4, 1, 2, 4, 10]
-WHEEL = {
-    "1": (21, 2),
-    "2": (13, 3),
-    "5": (7, 6),
-    "10": (4, 11),
-    "CoinFlip": (4, 0),
-    "Pachinko": (3, 0),
-    "CashHunt": (2, 0),
-    "CrazyTime": (1, 0)
-}
-BONUS_MULTIPLIERS = {"CoinFlip": 2.5, "Pachinko": 3, "CashHunt": 4, "CrazyTime": 5}
+SPINS = ["1","2","5","10","CoinFlip","Pachinko","CashHunt","CrazyTime"]
+WHEEL = {"1": (21,2),"2":(13,3),"5":(7,6),"10":(4,11),
+         "CoinFlip":(4,0),"Pachinko":(3,0),"CashHunt":(2,0),"CrazyTime":(1,0)}
+BONUS_MULTIPLIERS = {"CoinFlip":2.5,"Pachinko":3,"CashHunt":4,"CrazyTime":5}
 
 def adjust_to_minimum(stake):
     for m in MIN_BETS:
@@ -40,48 +32,68 @@ class CrazyTimeBot:
 
     def suggest_bet(self, past_results):
         bet_suggestion = {}
+        strategies_used = []
+
         if not past_results:
-            return bet_suggestion
+            return bet_suggestion, strategies_used
 
-        last_spin = past_results[-1]
+        last_spin = past_results[-1] if past_results else None
 
-        # Martingale sur 1
+        # --- Martingale 1 ---
         if last_spin == "1":
             self.martingale_step_1 = 0
             self.martingale_bet_1 = MIN_BETS[0]
         else:
             self.martingale_step_1 += 1
             self.martingale_bet_1 = min(adjust_to_minimum(self.martingale_bet_1*2), self.bankroll)
+
         if self.bankroll >= self.martingale_bet_1:
             bet_suggestion["1"] = self.martingale_bet_1
+            strategies_used.append("Martingale 1")
 
-        # God Mode sur 2,5,10 + bonus (sauf dernier bonus)
+        # --- God Mode 2,5,10 ---
         god_targets = ["2","5","10"]
-        remaining_bankroll = max(self.bankroll - sum(bet_suggestion.values()), 0)
-        if remaining_bankroll >= MIN_BETS[0]:
-            portion = remaining_bankroll / len(god_targets)
+        remaining = max(self.bankroll - sum(bet_suggestion.values()), 0)
+        if remaining >= MIN_BETS[0]:
+            portion = remaining / len(god_targets)
             for t in god_targets:
                 bet_suggestion[t] = adjust_to_minimum(portion)
+            strategies_used.append("God Mode 2,5,10")
+
+        # --- God Mode 2,5,10 + Bonus ---
+        remaining = max(self.bankroll - sum(bet_suggestion.values()),0)
+        if remaining >= MIN_BETS[0]:
+            portion = remaining / (len(god_targets)+3)
+            for t in god_targets:
+                bet_suggestion[t] = adjust_to_minimum(portion)
+            for b in ["CoinFlip","Pachinko","CashHunt"]:
+                if b != self.last_bonus:
+                    bet_suggestion[b] = adjust_to_minimum(portion)
+            strategies_used.append("God Mode 2,5,10 + Bonus")
+
+        # --- 1 + Bonus Combo ---
+        remaining = max(self.bankroll - sum(bet_suggestion.values()),0)
+        if remaining >= MIN_BETS[0]:
+            bet_suggestion["1"] = bet_suggestion.get("1",0) + MIN_BETS[0]
             for b in ["CoinFlip","Pachinko","CashHunt","CrazyTime"]:
                 if b != self.last_bonus:
-                    bet_suggestion[b] = adjust_to_minimum(portion / 2)
+                    bet_suggestion[b] = bet_suggestion.get(b,0) + MIN_BETS[0]
+            strategies_used.append("1 + Bonus Combo")
 
-        # 1 + Bonus Combo
-        remaining_bankroll = max(self.bankroll - sum(bet_suggestion.values()), 0)
-        if remaining_bankroll >= MIN_BETS[0]:
-            bet_suggestion["1"] = bet_suggestion.get("1",0)+MIN_BETS[0]
-            for b in ["CoinFlip","Pachinko","CashHunt","CrazyTime"]:
-                if b != self.last_bonus:
-                    bet_suggestion[b] = bet_suggestion.get(b,0)+MIN_BETS[0]
+        # Ajustement pour bankroll
+        total_bet = sum(bet_suggestion.values())
+        if total_bet > self.bankroll:
+            scale = self.bankroll / total_bet
+            for k in bet_suggestion:
+                bet_suggestion[k] = max(MIN_BETS[0], round(bet_suggestion[k]*scale,2))
 
-        if sum(bet_suggestion.values()) < MIN_BETS[0]:
-            return {}
-        return bet_suggestion
+        return bet_suggestion, strategies_used
 
     def apply_spin(self, spin_result, bet_suggestion):
         total_bet = sum(bet_suggestion.values())
         win_amount = 0.0
         hit = False
+
         for tgt, stake in bet_suggestion.items():
             if tgt == spin_result:
                 if tgt in ["1","2","5","10"]:
@@ -119,66 +131,65 @@ class CrazyTimeBot:
 if "bot" not in st.session_state:
     st.session_state.bot = CrazyTimeBot(120)
 if "history_df" not in st.session_state:
-    st.session_state.history_df = pd.DataFrame(columns=[
-        "timestamp","spin","total_bet","win_amount","bankroll_before","bankroll_after","outcome"
-    ])
+    st.session_state.history_df = pd.DataFrame(columns=["timestamp","spin","total_bet","win_amount","bankroll_before","bankroll_after","outcome"])
 if "past_results" not in st.session_state:
     st.session_state.past_results = []
+if "history_finished" not in st.session_state:
+    st.session_state.history_finished = False
 
 bot = st.session_state.bot
 past_results = st.session_state.past_results
+history_finished = st.session_state.history_finished
 
 # -----------------------
 # INTERFACE
 # -----------------------
-st.title("Crazy Time Bot 🎰")
+st.title("Crazy Time Bot Optimisé ✅")
 
-# Réinitialisation
-st.sidebar.header("Contrôles session")
+st.sidebar.header("Contrôles")
 if st.sidebar.button("Reset / Nouvelle session"):
     st.session_state.bot = CrazyTimeBot(120)
     st.session_state.history_df = st.session_state.history_df.iloc[0:0]
     st.session_state.past_results = []
+    st.session_state.history_finished = False
     st.experimental_rerun()
 
-st.sidebar.write(f"Bankroll actuelle: {bot.bankroll:.2f}$")
-st.sidebar.write(f"Dernier bonus (exclu): {bot.last_bonus or '—'}")
+st.sidebar.write(f"Bankroll: {bot.bankroll:.2f}$")
+st.sidebar.write(f"Dernier bonus exclu: {bot.last_bonus or '—'}")
 
 # -----------------------
-# Entrée de l'historique
+# Entrée des spins
 # -----------------------
-st.subheader("Entrée des résultats historiques")
-spin_input = st.selectbox("Choisir le résultat du spin", ["", "1","2","5","10","CoinFlip","Pachinko","CashHunt","CrazyTime"])
-if st.button("Ajouter au tableau"):
-    if spin_input:
-        past_results.append(spin_input)
-        st.success(f"Résultat '{spin_input}' ajouté à l'historique.")
-    else:
-        st.warning("Veuillez sélectionner un résultat.")
+if not history_finished:
+    st.subheader("Entrée de l'historique des spins")
+    cols = st.columns(4)
+    for idx, spin in enumerate(SPINS):
+        if cols[idx%4].button(spin):
+            past_results.append(spin)
+            st.success(f"Résultat '{spin}' ajouté à l'historique.")
 
-st.write(f"Résultats saisis: {len(past_results)} spins")
-
-# -----------------------
-# Affichage et calcul après historique complet
-# -----------------------
-if past_results:
+    st.write(f"Total spins saisis: {len(past_results)}")
+    if st.button("Historique terminé / Live spin"):
+        st.session_state.history_finished = True
+        st.experimental_rerun()
+else:
     st.subheader("Mises suggérées pour le prochain spin")
-    suggestion = bot.suggest_bet(past_results)
+    suggestion, strategies = bot.suggest_bet(past_results)
     if not suggestion:
-        st.info("Ne pas miser (aucune mise recommandée selon les règles / bankroll).")
+        st.info("Aucune mise recommandée selon la stratégie / bankroll.")
     else:
-        df_sugg = pd.DataFrame([{"Section":k,"Mise($)":round(v,2)} for k,v in suggestion.items()])
+        df_sugg = pd.DataFrame([{"Segment":k,"Mise($)":round(v,2)} for k,v in suggestion.items()])
         st.table(df_sugg)
+        st.write("Stratégies appliquées :", ", ".join(strategies))
 
-    # Appliquer un spin (simuler le dernier pour tester)
     if st.button("Appliquer le dernier spin saisi"):
         last_spin = past_results[-1]
         result = bot.apply_spin(last_spin, suggestion)
         st.session_state.history_df = pd.concat([st.session_state.history_df,pd.DataFrame([result])],ignore_index=True)
-        st.success(f"Spin '{last_spin}' appliqué : {result['outcome']} — Bankroll: {result['bankroll_after']:.2f}$")
+        st.success(f"Spin '{last_spin}' : {result['outcome']} — Bankroll: {result['bankroll_after']:.2f}$")
 
 # -----------------------
-# Historique
+# Historique et graphique
 # -----------------------
 st.subheader("Historique des spins")
 st.dataframe(st.session_state.history_df.tail(20), use_container_width=True)
@@ -195,4 +206,4 @@ if not st.session_state.history_df.empty:
     csv = st.session_state.history_df.to_csv(index=False).encode('utf-8')
     st.download_button("Télécharger l'historique CSV", data=csv, file_name="crazytime_history.csv", mime="text/csv")
 
-st.caption("⚠️ Suggestions de paris uniquement. Utilisation à vos risques.")
+st.caption("⚠️ Suggestions uniquement. Pour analyse / simulation.")
