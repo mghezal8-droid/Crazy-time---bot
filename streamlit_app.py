@@ -25,19 +25,20 @@ if "last_strategy_name" not in st.session_state:
     st.session_state.last_strategy_name = None
 
 # -----------------------------
-# Fonction unité minimale
+# Fonction unité minimale réaliste
 # -----------------------------
 def get_unit(bankroll):
-    base = max(0.2, bankroll * 0.002)
-    if base < 0.4: return 0.2
-    elif base < 1: return 0.4
-    elif base < 2: return 1
-    elif base < 4: return 2
-    elif base < 10: return 4
-    else: return 10
+    if bankroll < 200:
+        return 1
+    elif bankroll < 500:
+        return 2
+    elif bankroll < 1000:
+        return 4
+    else:
+        return 10
 
 # -----------------------------
-# Probabilités
+# Probabilités améliorées
 # -----------------------------
 def compute_probabilities(history):
     counts = {}
@@ -46,7 +47,10 @@ def compute_probabilities(history):
         seg = spin["result"].split("x")[0].strip()
         counts[seg] = counts.get(seg, 0) + 1
     all_segments = ["1","2","5","10","Coin Flip","Cash Hunt","Pachinko","Crazy Time"]
-    probs = {seg: counts.get(seg,0)/total if total>0 else 0 for seg in all_segments}
+    probs = {seg: counts.get(seg,0)/total if total>0 else 1/len(all_segments) for seg in all_segments}
+    # Normalisation pour garantir somme = 1
+    s = sum(probs.values())
+    if s > 0: probs = {k:v/s for k,v in probs.items()}
     return probs
 
 # -----------------------------
@@ -80,7 +84,7 @@ def one_plus_bonus(bankroll):
     return strat, "1 + Bonus"
 
 # -----------------------------
-# Spin attendu et stratégie
+# Choix stratégie spin attendu
 # -----------------------------
 def choose_strategy_expected_spin(history, bankroll):
     # Martingale prioritaire
@@ -91,6 +95,7 @@ def choose_strategy_expected_spin(history, bankroll):
         return strategy, name
 
     probs = compute_probabilities(history)
+    # spin probable
     max_seg = max(probs, key=lambda k: probs[k])
 
     strategies = [
@@ -103,7 +108,8 @@ def choose_strategy_expected_spin(history, bankroll):
     best_score = 0.0
 
     for strat_dict, name in strategies:
-        score = strat_dict.get(max_seg,0)
+        # Score = probabilité du spin probable * montant mis
+        score = strat_dict.get(max_seg,0) * probs[max_seg]
         if name == st.session_state.last_strategy_name and st.session_state.strategy_repeat_count >=2:
             score *= 0.0
         if score > best_score:
@@ -124,7 +130,7 @@ def choose_strategy_expected_spin(history, bankroll):
     return best_strategy, best_name
 
 # -----------------------------
-# Calcul gain avec multiplicateur pour tous les segments
+# Calcul gain avec multiplicateur
 # -----------------------------
 def calculate_gain(spin, strategy):
     gain = 0
@@ -142,7 +148,7 @@ def calculate_gain(spin, strategy):
     return gain
 
 # -----------------------------
-# Affichage
+# Affichage stratégie
 # -----------------------------
 def display_suggestion(strategy, name):
     st.subheader(f"💡 Suggestion Prochain Spin : {name}")
@@ -153,9 +159,9 @@ def display_suggestion(strategy, name):
         st.write(f"- {seg} → {round(mise,2)} $")
 
 # -----------------------------
-# Interface
+# Interface Streamlit
 # -----------------------------
-st.title("🎡 Crazy Time Bot (Spin attendu avec multiplicateur)")
+st.title("🎡 Crazy Time Bot (Unités réalistes & spin attendu)")
 st.sidebar.header("⚙️ Paramètres")
 st.session_state.bankroll = st.sidebar.number_input(
     "Bankroll initiale ($)", min_value=50.0, max_value=1000.0,
@@ -192,7 +198,7 @@ if st.button("Résultat Spin Live"):
         st.session_state.history.append({"result": live_spin, "gain":gain})
         st.success(f"Résultat {live_spin} → Gain {round(gain,2)} | Bankroll: {round(st.session_state.bankroll,2)}")
 
-        # Nouvelle stratégie basée sur spin attendu
+        # Nouvelle stratégie
         st.session_state.last_strategy, _ = choose_strategy_expected_spin(st.session_state.history, st.session_state.bankroll)
 
 display_suggestion(st.session_state.last_strategy, st.session_state.last_strategy_name)
