@@ -45,7 +45,8 @@ def compute_probabilities(history):
     for spin in history:
         seg = spin["result"].split("x")[0].strip()
         counts[seg] = counts.get(seg, 0) + 1
-    probs = {seg: counts.get(seg, 0)/total for seg in ["1","2","5","10","Coin Flip","Cash Hunt","Pachinko","Crazy Time"]}
+    all_segments = ["1","2","5","10","Coin Flip","Cash Hunt","Pachinko","Crazy Time"]
+    probs = {seg: counts.get(seg,0)/total if total>0 else 0 for seg in all_segments}
     return probs
 
 # -----------------------------
@@ -62,10 +63,7 @@ def god_mode(bankroll):
 
 def god_mode_bonus(bankroll):
     unit = get_unit(bankroll)
-    strat = {}
-    strat["2"] = 0.8*unit
-    strat["5"] = 0.4*unit
-    strat["10"] = 0.4*unit
+    strat = {"2":0.8*unit,"5":0.4*unit,"10":0.4*unit}
     for bonus in ["Coin Flip","Cash Hunt","Pachinko","Crazy Time"]:
         if st.session_state.skip_bonus == bonus: continue
         strat[bonus] = 0.2*unit
@@ -82,56 +80,51 @@ def one_plus_bonus(bankroll):
     return strat, "1 + Bonus"
 
 # -----------------------------
-# Choisir stratégie
+# Spin attendu et stratégie
 # -----------------------------
-def expected_profit(strategy, probs):
-    profit = 0
-    for seg, mise in strategy.items():
-        mult = 1
-        if seg == "1": mult = 2
-        elif seg == "2": mult = 3
-        elif seg == "5": mult = 6
-        elif seg == "10": mult = 11
-        profit += mise*mult*probs.get(seg,0)
-    return profit
-
-def choose_strategy(history, bankroll):
+def choose_strategy_expected_spin(history, bankroll):
     # Martingale prioritaire
     if st.session_state.martingale_loss > 0:
         strategy, name = martingale_one(bankroll)
         st.session_state.strategy_repeat_count = 0
         st.session_state.last_strategy_name = name
         return strategy, name
-    
+
     probs = compute_probabilities(history)
-    
-    # Séparer dictionnaire et nom pour éviter l'erreur
+    max_seg = max(probs, key=lambda k: probs[k])
+
     strategies = [
-        god_mode(bankroll)[0],
-        god_mode_bonus(bankroll)[0],
-        one_plus_bonus(bankroll)[0]
+        god_mode(bankroll),
+        god_mode_bonus(bankroll),
+        one_plus_bonus(bankroll)
     ]
-    strategy_names = ["God Mode", "God Mode + Bonus", "1 + Bonus"]
-    
-    best = None
-    best_profit = -1
-    best_name = None
-    for strat, name in zip(strategies, strategy_names):
-        repeat_penalty = 0.9 if name == st.session_state.last_strategy_name and st.session_state.strategy_repeat_count >=2 else 1
-        profit = expected_profit(strat, probs) * repeat_penalty
-        if profit > best_profit:
-            best_profit = profit
-            best = strat
+    best_strategy = None
+    best_name = "No Bets"
+    best_score = 0.0
+
+    for strat_dict, name in strategies:
+        score = strat_dict.get(max_seg,0)
+        if name == st.session_state.last_strategy_name and st.session_state.strategy_repeat_count >=2:
+            score *= 0.0
+        if score > best_score:
+            best_score = score
+            best_strategy = strat_dict
             best_name = name
+
+    if best_score < 0.05:
+        best_strategy = {}
+        best_name = "No Bets"
+
     if best_name == st.session_state.last_strategy_name:
         st.session_state.strategy_repeat_count +=1
     else:
-        st.session_state.strategy_repeat_count = 0
+        st.session_state.strategy_repeat_count =0
     st.session_state.last_strategy_name = best_name
-    return best, best_name
+
+    return best_strategy, best_name
 
 # -----------------------------
-# Calcul gain
+# Calcul gain avec multiplicateur pour tous les segments
 # -----------------------------
 def calculate_gain(spin, strategy):
     gain = 0
@@ -140,11 +133,12 @@ def calculate_gain(spin, strategy):
     mult = int(parts[1]) if len(parts)>1 else 1
     for bet_seg, mise in strategy.items():
         if bet_seg == seg:
-            if seg=="1": gain += mise*2
-            elif seg=="2": gain += mise*3
-            elif seg=="5": gain += mise*6
-            elif seg=="10": gain += mise*11
-            else: gain += mise*mult + mise
+            if seg=="1": gain += mise*2*mult
+            elif seg=="2": gain += mise*3*mult
+            elif seg=="5": gain += mise*6*mult
+            elif seg=="10": gain += mise*11*mult
+            else:  # bonus
+                gain += mise*mult + mise
     return gain
 
 # -----------------------------
@@ -153,7 +147,7 @@ def calculate_gain(spin, strategy):
 def display_suggestion(strategy, name):
     st.subheader(f"💡 Suggestion Prochain Spin : {name}")
     if not strategy:
-        st.info("Aucune stratégie pour l'instant.")
+        st.info("No Bets")
         return
     for seg,mise in strategy.items():
         st.write(f"- {seg} → {round(mise,2)} $")
@@ -161,7 +155,7 @@ def display_suggestion(strategy, name):
 # -----------------------------
 # Interface
 # -----------------------------
-st.title("🎡 Crazy Time Bot")
+st.title("🎡 Crazy Time Bot (Spin attendu avec multiplicateur)")
 st.sidebar.header("⚙️ Paramètres")
 st.session_state.bankroll = st.sidebar.number_input(
     "Bankroll initiale ($)", min_value=50.0, max_value=1000.0,
@@ -176,7 +170,7 @@ if st.button("Ajouter à l'historique"):
         st.success(f"Ajouté : {new_spin}")
 
 if st.button("Historique terminé"):
-    st.session_state.last_strategy, _ = choose_strategy(st.session_state.history, st.session_state.bankroll)
+    st.session_state.last_strategy, _ = choose_strategy_expected_spin(st.session_state.history, st.session_state.bankroll)
 
 st.write(pd.DataFrame(st.session_state.history))
 
@@ -198,7 +192,7 @@ if st.button("Résultat Spin Live"):
         st.session_state.history.append({"result": live_spin, "gain":gain})
         st.success(f"Résultat {live_spin} → Gain {round(gain,2)} | Bankroll: {round(st.session_state.bankroll,2)}")
 
-        # Nouvelle stratégie
-        st.session_state.last_strategy, _ = choose_strategy(st.session_state.history, st.session_state.bankroll)
+        # Nouvelle stratégie basée sur spin attendu
+        st.session_state.last_strategy, _ = choose_strategy_expected_spin(st.session_state.history, st.session_state.bankroll)
 
 display_suggestion(st.session_state.last_strategy, st.session_state.last_strategy_name)
