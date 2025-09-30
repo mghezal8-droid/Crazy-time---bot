@@ -104,21 +104,25 @@ def choose_strategy(history, bankroll):
         return strategy, name
     
     probs = compute_probabilities(history)
-    strategies = [god_mode(bankroll), god_mode_bonus(bankroll), one_plus_bonus(bankroll)]
+    
+    # Séparer dictionnaire et nom pour éviter l'erreur
+    strategies = [
+        god_mode(bankroll)[0],
+        god_mode_bonus(bankroll)[0],
+        one_plus_bonus(bankroll)[0]
+    ]
     strategy_names = ["God Mode", "God Mode + Bonus", "1 + Bonus"]
     
     best = None
     best_profit = -1
     best_name = None
     for strat, name in zip(strategies, strategy_names):
-        # Limite répétition : si même stratégie répétée >2 tours, on réduit artificiellement profit
         repeat_penalty = 0.9 if name == st.session_state.last_strategy_name and st.session_state.strategy_repeat_count >=2 else 1
         profit = expected_profit(strat, probs) * repeat_penalty
         if profit > best_profit:
             best_profit = profit
             best = strat
             best_name = name
-    # Mettre à jour répétition
     if best_name == st.session_state.last_strategy_name:
         st.session_state.strategy_repeat_count +=1
     else:
