@@ -1,131 +1,127 @@
 import streamlit as st
 import pandas as pd
 
-# --- Probabilités officielles Crazy Time ---
-probabilities = {
-    "1": 21, "2": 13, "5": 7, "10": 4,
-    "CoinFlip": 4, "CashHunt": 2, "Pachinko": 2, "CrazyTime": 1
-}
-total_segments = sum(probabilities.values())
+# --- Configuration de base ---
+SPINS = ["1", "2", "5", "10", "CoinFlip", "CashHunt", "Pachinko", "CrazyTime"]
+PAYOUTS = {"1": 2, "2": 3, "5": 6, "10": 11, "CoinFlip": 2, "CashHunt": 3, "Pachinko": 4, "CrazyTime": 5}
+WHEEL = {"1":21, "2":13, "5":7, "10":4, "CoinFlip":4, "CashHunt":2, "Pachinko":2, "CrazyTime":1}
+TOTAL_SEGMENTS = sum(WHEEL.values())
+MIN_BETS = [0.2, 0.4, 1, 2, 4, 10]
 
-# --- Session State init ---
+# --- Session State ---
 if "history" not in st.session_state:
     st.session_state.history = []
 if "bankroll" not in st.session_state:
-    st.session_state.bankroll = 150  # bankroll de départ
+    st.session_state.bankroll = 150
+if "last_bonus" not in st.session_state:
+    st.session_state.last_bonus = None
+if "live_mode" not in st.session_state:
+    st.session_state.live_mode = False
 if "strategy" not in st.session_state:
     st.session_state.strategy = None
 if "units" not in st.session_state:
     st.session_state.units = {}
-if "last_bonus" not in st.session_state:
-    st.session_state.last_bonus = None
-if "live_mode" not in st.session_state:
-    st.session_state.live_mode = False  # False = saisie historique, True = live
 
 # --- Stratégies ---
-def martingale_on_1(bankroll):
-    sequence = [0.2, 0.4, 1, 2, 4, 10]
+def martingale_on_1():
+    sequence = [0.2,0.4,1,2,4,10]
     step = min(len(st.session_state.history), len(sequence)-1)
     return {"1": sequence[step]}
 
 def god_mode_2_5_10():
-    return {"2": 2, "5": 1, "10": 1}
+    return {"2":2, "5":1, "10":1}
 
-def god_mode_2_5_10_bonus(last_bonus=None):
+def god_mode_2_5_10_bonus():
     bets = god_mode_2_5_10()
-    for b in ["CoinFlip", "CashHunt", "Pachinko", "CrazyTime"]:
-        if b != last_bonus:
+    for b in ["CoinFlip","CashHunt","Pachinko","CrazyTime"]:
+        if b != st.session_state.last_bonus:
             bets[b] = 1
     return bets
 
-def one_plus_bonus(last_bonus=None):
-    bets = {"1": 1}
-    for b in ["CoinFlip", "CashHunt", "Pachinko", "CrazyTime"]:
-        if b != last_bonus:
+def one_plus_bonus():
+    bets = {"1":1}
+    for b in ["2","5","10","CoinFlip","CashHunt","Pachinko","CrazyTime"]:
+        if b != st.session_state.last_bonus:
             bets[b] = 1
     return bets
 
-# --- Choix automatique stratégie ---
-def choose_strategy(history):
-    counts = {k: history.count(k) for k in probabilities}
-    total_spins = len(history)
-    if total_spins < 10:
+# --- Choix stratégie basé sur l’historique ---
+def choose_strategy():
+    hist = st.session_state.history
+    total = len(hist)
+    if total < 10:
         return "Attente", {}
+    counts = {s: hist.count(s) for s in SPINS}
+    expected = {s: WHEEL[s]/TOTAL_SEGMENTS*total for s in SPINS}
+    diffs = {s: expected[s]-counts.get(s,0) for s in SPINS}
 
-    expected = {k: probabilities[k]/total_segments*total_spins for k in probabilities}
-    diffs = {k: expected[k] - counts.get(k, 0) for k in probabilities}
-
-    if diffs["1"] > 3:
-        return "Martingale 1", martingale_on_1(st.session_state.bankroll)
-    if diffs["2"] + diffs["5"] + diffs["10"] > 3:
+    if diffs["1"]>3:
+        return "Martingale 1", martingale_on_1()
+    if diffs["2"]+diffs["5"]+diffs["10"]>3:
         return "God Mode 2,5,10", god_mode_2_5_10()
-    if diffs["2"] + diffs["5"] + diffs["10"] > 2 and (
-        diffs["CoinFlip"] + diffs["CashHunt"] + diffs["Pachinko"] + diffs["CrazyTime"]) > 2:
-        return "God Mode 2,5,10 + Bonus", god_mode_2_5_10_bonus(st.session_state.last_bonus)
-    return "1 + Bonus Combo", one_plus_bonus(st.session_state.last_bonus)
+    if diffs["2"]+diffs["5"]+diffs["10"]>2 and sum([diffs[b] for b in ["CoinFlip","CashHunt","Pachinko","CrazyTime"]])>2:
+        return "God Mode 2,5,10 + Bonus", god_mode_2_5_10_bonus()
+    return "1 + Bonus Combo", one_plus_bonus()
 
 # --- Interface ---
-st.title("🎡 Crazy Time Bot")
-
-st.write(f"💰 **Bankroll actuelle : {st.session_state.bankroll}$**")
+st.title("🎡 Crazy Time Bot - Version Video")
 
 col1, col2 = st.columns(2)
 with col1:
-    result = st.text_input("Résultat du spin (1,2,5,10,CoinFlip,CashHunt,Pachinko,CrazyTime)")
+    spin_input = st.text_input("Spin (1,2,5,10,CoinFlip,CashHunt,Pachinko,CrazyTime)")
 with col2:
-    multiplier = st.number_input("Multiplicateur (ex: 1, 2, 10...)", min_value=1, step=1, value=1)
+    multiplier = st.number_input("Multiplicateur", min_value=1, step=1, value=1)
 
-# --- Phase 1 : Entrée de l'historique ---
+# --- Phase 1 : Entrée historique ---
 if not st.session_state.live_mode:
     if st.button("Ajouter à l'historique"):
-        if result:
-            st.session_state.history.append(result)
-            if result in ["CoinFlip", "CashHunt", "Pachinko", "CrazyTime"]:
-                st.session_state.last_bonus = result
+        if spin_input:
+            st.session_state.history.append(spin_input)
+            if spin_input in ["CoinFlip","CashHunt","Pachinko","CrazyTime"]:
+                st.session_state.last_bonus = spin_input
 
     st.subheader("📜 Historique des spins saisis")
-    if len(st.session_state.history) > 0:
+    if st.session_state.history:
         st.dataframe(pd.DataFrame(st.session_state.history, columns=["Spin"]))
     else:
-        st.info("Ajoute des spins pour construire l'historique.")
+        st.info("Ajoute les spins pour construire l'historique.")
 
-    if st.button("✅ Historique terminé, commencer à miser"):
+    if st.button("✅ Historique terminé - Commencer live"):
         st.session_state.live_mode = True
-        st.success("Mode Live activé : le bot commence à suggérer et calculer.")
+        st.success("Mode live activé. Le bot commence à suggérer les mises.")
 
-# --- Phase 2 : Mode Live ---
+# --- Phase 2 : Live ---
 else:
     if st.button("Spin Live"):
-        if result:
-            st.session_state.history.append(result)
-            if result in ["CoinFlip", "CashHunt", "Pachinko", "CrazyTime"]:
-                st.session_state.last_bonus = result
+        if spin_input:
+            st.session_state.history.append(spin_input)
+            if spin_input in ["CoinFlip","CashHunt","Pachinko","CrazyTime"]:
+                st.session_state.last_bonus = spin_input
 
-            # Choix stratégie
-            strat, units = choose_strategy(st.session_state.history)
+            # Choix stratégie et unités
+            strat, units = choose_strategy()
             st.session_state.strategy = strat
             st.session_state.units = units
 
-            # Calcul résultat
+            # Calcul gain
+            total_bet = sum(units.values())
             gain = 0
-            mise_totale = sum(units.values())
-            if result in units:
-                if result in ["1", "2", "5", "10"]:
-                    payout = {"1": 2, "2": 3, "5": 6, "10": 11}[result]
-                    gain = (multiplier * payout * units[result]) + units[result]
+            if spin_input in units:
+                if spin_input in ["1","2","5","10"]:
+                    gain = (multiplier*PAYOUTS[spin_input]*units[spin_input])+units[spin_input]
                 else:
-                    gain = (multiplier * units[result]) + units[result]
-            net = gain - mise_totale
+                    gain = (multiplier*units[spin_input])+units[spin_input]
+            net = gain - total_bet
             st.session_state.bankroll += net
 
             # --- Affichage ---
-            st.subheader("📊 Résultat du spin")
-            st.write(f"🎯 Spin : **{result} (x{multiplier})**")
-            st.write(f"🎯 Stratégie choisie : **{st.session_state.strategy}**")
+            st.subheader("📊 Résultat Spin Live")
+            st.write(f"🎯 Spin : **{spin_input} (x{multiplier})**")
+            st.write(f"🎯 Stratégie choisie : **{strat}**")
             st.table(pd.DataFrame(list(units.items()), columns=["Segment", "Mise (unités)"]))
-            st.write(f"💸 Total misé : {mise_totale}$")
-            if gain > 0:
-                st.success(f"✅ Gain : {gain}$  | Net : +{net}$")
+            st.write(f"💸 Total misé : {total_bet}$")
+            if gain>0:
+                st.success(f"✅ Gain : {gain}$ | Net : +{net}$")
             else:
                 st.error(f"❌ Perte : {abs(net)}$")
             st.write(f"💰 Bankroll : {st.session_state.bankroll}$")
