@@ -1,13 +1,14 @@
 import streamlit as st
 import pandas as pd
+import numpy as np
 
-st.set_page_config(page_title="Crazy Time Bot", layout="wide")
+st.set_page_config(page_title="Crazy Time Bot Auto-Strategy", layout="wide")
 
 # --- Initialisation ---
 if "history" not in st.session_state:
     st.session_state.history = []
 if "results_df" not in st.session_state:
-    st.session_state.results_df = pd.DataFrame(columns=["Spin","Résultat","Multiplicateur","Total Mise","Gain Net","Bankroll"])
+    st.session_state.results_df = pd.DataFrame(columns=["Spin","Résultat","Multiplicateur","Total Mise","Gain Net","Bankroll","Stratégie"])
 if "bankroll" not in st.session_state:
     st.session_state.bankroll = 150
 if "next_mises" not in st.session_state:
@@ -18,8 +19,8 @@ if "last_spin_val" not in st.session_state:
     st.session_state.last_spin_val = None
 if "last_gain" not in st.session_state:
     st.session_state.last_gain = 0
-if "base_option" not in st.session_state:
-    st.session_state.base_option = 1
+if "strategy_name" not in st.session_state:
+    st.session_state.strategy_name = None
 
 # --- Segments Crazy Time ---
 segments_numbers = ["1","2","5","10"]
@@ -31,7 +32,7 @@ def calc_gain_net(result,mises,mult):
     total_mise = sum(mises.values())
     if result in segments_numbers:
         n = mises[result]
-        gain_net = (n * (int(result)+1) + n) - (total_mise - n)
+        gain_net = (n * (int(result)) + n) - (total_mise - n)
     elif result in segments_bonus:
         n = mises[result]
         gain_net = (n * mult + n) - (total_mise - n)
@@ -39,7 +40,7 @@ def calc_gain_net(result,mises,mult):
         gain_net = -total_mise
     return gain_net,total_mise
 
-def generate_mises_option(strategy_name, last_spin_val=None):
+def generate_mises_option(strategy_name,last_spin_val=None,bankroll=150):
     mises = {}
     if strategy_name=="Martingale1":
         mises = {"1":1,"2":0,"5":0,"10":0,"CoinFlip":0,"Pachinko":0,"CashHunt":0,"CrazyTime":0}
@@ -52,30 +53,43 @@ def generate_mises_option(strategy_name, last_spin_val=None):
     # Ne pas miser sur bonus sorti tour précédent
     if last_spin_val in segments_bonus:
         mises[last_spin_val]=0
+    # Ajuster si total mise > bankroll
+    total_mise = sum(mises.values())
+    if total_mise>bankroll:
+        scale=bankroll/total_mise
+        mises={seg:m*scale for seg,m in mises.items()}
     return mises
 
-def adjust_mises_martingale(last_gain,last_mises,bankroll):
-    if last_gain>=0:
-        next_mises = last_mises
-        warning=""
-    else:
-        next_mises = {seg:m*2 for seg,m in last_mises.items()}
-        total_next = sum(next_mises.values())
-        warning=""
-        if total_next>bankroll:
-            scale=bankroll/total_next
-            next_mises={seg:m*scale for seg,m in next_mises.items()}
-            warning=f"⚠️ Bankroll insuffisante pour doubler, mise ajustée à {bankroll:.2f}$"
-    return next_mises,warning
+def expected_profit(strat,probs):
+    return sum(strat[seg]*probs.get(seg,0) for seg in strat)
+
+def choose_strategy(history,bankroll):
+    # Calcul des probabilités basiques à partir de l'historique
+    counts = {seg:0 for seg in segments}
+    for h in history:
+        counts[h["Résultat"]] +=1
+    total = max(len(history),1)
+    probs = {seg: counts[seg]/total for seg in segments}
+    # Calcul profit attendu pour chaque stratégie
+    strategies = ["Martingale1","GodMode2_5_10","GodMode2_5_10_Bonus","1+Bonus"]
+    best_profit = -np.inf
+    best_strat = None
+    for strat_name in strategies:
+        mises = generate_mises_option(strat_name,bankroll=bankroll)
+        profit = expected_profit(mises,probs)
+        if profit>best_profit:
+            best_profit = profit
+            best_strat = strat_name
+    return best_strat
 
 def process_spin(result,mult,last_mises,last_bankroll,last_gain,strategy_name):
     mises_utilisees = last_mises.copy()
     gain_net,total_mise = calc_gain_net(result,mises_utilisees,mult)
     new_bankroll = last_bankroll + gain_net
-    # Ajustement martingale uniquement pour 1
+    # Ajustement martingale
     if strategy_name=="Martingale1":
         if gain_net>=0:
-            next_mises=generate_mises_option(strategy_name)
+            next_mises=generate_mises_option(strategy_name,bankroll=new_bankroll)
         else:
             next_mises={seg:m*2 for seg,m in last_mises.items()}
             total_next = sum(next_mises.values())
@@ -83,18 +97,16 @@ def process_spin(result,mult,last_mises,last_bankroll,last_gain,strategy_name):
                 scale=new_bankroll/total_next
                 next_mises={seg:m*scale for seg,m in next_mises.items()}
     else:
-        next_mises = generate_mises_option(strategy_name,result)
+        next_mises = generate_mises_option(strategy_name,result,bankroll=new_bankroll)
     return gain_net,total_mise,new_bankroll,strategy_name,next_mises
 
 # --- Interface ---
-st.title("🎰 Crazy Time Bot - Stratégies Fixes & Multiplicateur Manuel")
+st.title("🎰 Crazy Time Bot Auto-Strategy")
 
 # Sidebar paramètres
 st.sidebar.header("⚙️ Paramètres")
-bankroll_input = st.sidebar.number_input("Bankroll initiale ($)",min_value=50,max_value=1000,value=st.session_state.bankroll)
-st.session_state.bankroll=bankroll_input
-
-strategy_name = st.sidebar.selectbox("Choisir stratégie initiale",["Martingale1","GodMode2_5_10","GodMode2_5_10_Bonus","1+Bonus"])
+st.session_state.bankroll = st.sidebar.number_input("Bankroll initiale ($)",50,1000,st.session_state.bankroll)
+st.sidebar.markdown("Le bot choisira automatiquement la meilleure stratégie après analyse de l'historique.")
 
 # Sidebar historique
 st.sidebar.header("📥 Ajouter spin à l'historique")
@@ -116,21 +128,24 @@ if st.sidebar.button("✅ Fin historique et commencer"):
     bankroll=st.session_state.bankroll
     last_spin_val=None
     last_gain=0
-    last_mises=generate_mises_option(strategy_name)
+    # Choisir la meilleure stratégie
+    st.session_state.strategy_name=choose_strategy(st.session_state.history,bankroll)
+    strategy_name=st.session_state.strategy_name
+    last_mises=generate_mises_option(strategy_name,bankroll=bankroll)
     results=[]
-    warning_msg=""
     for spin in st.session_state.history:
         result=spin["Résultat"]
         mult=spin["Multiplicateur"]
         mises_utilisees=last_mises.copy()
-        gain_net,total_mise,new_bankroll,strategy,next_mises=process_spin(result,mult,mises_utilisees,bankroll,last_gain,last_gain,strategy_name)
+        gain_net,total_mise,new_bankroll,strategy,next_mises=process_spin(result,mult,mises_utilisees,bankroll,last_gain,strategy_name)
         results.append({
             "Spin":spin["Spin"],
             "Résultat":result,
             "Multiplicateur":mult,
             "Total Mise":total_mise,
             "Gain Net":gain_net,
-            "Bankroll":new_bankroll
+            "Bankroll":new_bankroll,
+            "Stratégie":strategy
         })
         last_spin_val=result
         last_gain=gain_net
@@ -160,14 +175,15 @@ if st.session_state.mode_live:
             last_spin_val=st.session_state.results_df["Résultat"].iloc[-1] if not st.session_state.results_df.empty else None
             last_gain=st.session_state.last_gain
             mises_utilisees=st.session_state.next_mises.copy()
-            gain_net,total_mise,new_bankroll,strategy,next_mises=process_spin(seg,mult_live,mises_utilisees,last_bankroll,last_gain,last_gain,strategy_name)
+            gain_net,total_mise,new_bankroll,strategy,next_mises=process_spin(seg,mult_live,mises_utilisees,last_bankroll,last_gain,st.session_state.strategy_name)
             new_row={
                 "Spin":len(st.session_state.results_df)+1,
                 "Résultat":seg,
                 "Multiplicateur":mult_live,
                 "Total Mise":total_mise,
                 "Gain Net":gain_net,
-                "Bankroll":new_bankroll
+                "Bankroll":new_bankroll,
+                "Stratégie":strategy
             }
             st.session_state.results_df=pd.concat([st.session_state.results_df,pd.DataFrame([new_row])],ignore_index=True)
             st.session_state.next_mises=next_mises
