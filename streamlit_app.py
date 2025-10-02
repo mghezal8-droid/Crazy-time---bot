@@ -10,21 +10,38 @@ st.set_page_config(layout="wide")
 if 'history' not in st.session_state:
     st.session_state.history = []
 if 'bankroll' not in st.session_state:
-    st.session_state.bankroll = 150
+    st.session_state.bankroll = 150.0  # float pour éviter StreamlitMixedNumericTypesError
 if 'base_unit' not in st.session_state:
-    st.session_state.base_unit = 1
+    st.session_state.base_unit = 1.0   # float
 if 'last_gain' not in st.session_state:
     st.session_state.last_gain = 0
-if 'bankroll_progress' not in st.session_state:
-    st.session_state.bankroll_progress = [st.session_state.bankroll]
 
 # -------------------------------
 # Barre latérale
 # -------------------------------
 st.sidebar.header("Paramètres Crazy Time Bot")
-st.sidebar.number_input("Bankroll initial ($)", 50, 1000, key='bankroll')
-st.sidebar.number_input("Unité de base ($)", 0.2, 10, step=0.1, key='base_unit')
-bonus_multiplier_assumption = st.sidebar.number_input("Hypothèse multiplicateur bonus", 1, 50, value=10)
+st.sidebar.number_input(
+    "Bankroll initial ($)",
+    min_value=50.0,
+    max_value=1000.0,
+    value=float(st.session_state.bankroll),
+    step=1.0,
+    key='bankroll'
+)
+st.sidebar.number_input(
+    "Unité de base ($)",
+    min_value=0.2,
+    max_value=10.0,
+    value=float(st.session_state.base_unit),
+    step=0.1,
+    key='base_unit'
+)
+bonus_multiplier_assumption = st.sidebar.number_input(
+    "Hypothèse multiplicateur bonus",
+    min_value=1,
+    max_value=50,
+    value=10
+)
 
 # -------------------------------
 # Entrée historique
@@ -45,7 +62,7 @@ if st.button("Fin historique et commencer"):
 def choose_strategy(history, bankroll):
     freq = {s: history.count(s)/len(history) if history else 1/len(segments) for s in segments}
     strategies = ['Martingale1','GodMode','GodMode+Bonus','1+Bonus','NoBet']
-    # Choisir stratégie max EV (simplifiée)
+    # Choisir stratégie max EV (simplifié)
     best = max(strategies, key=lambda s: freq.get('1',0))
     if best=='Martingale1':
         mises = {'1':st.session_state.base_unit}
@@ -70,7 +87,6 @@ def process_spin(spin_result, multiplier, mises_utilisees, bankroll, last_gain, 
             gain = mises_utilisees[spin_result]*mult_table[spin_result]
     gain_net = gain - (mise_total - mises_utilisees.get(spin_result,0))
     new_bankroll = bankroll + gain_net
-
     # Martingale simple : doubler après perte si stratégie Martingale1
     next_mises = mises_utilisees.copy()
     if strategy_name=='Martingale1':
@@ -78,7 +94,6 @@ def process_spin(spin_result, multiplier, mises_utilisees, bankroll, last_gain, 
             next_mises = {k:v*2 for k,v in mises_utilisees.items()}
         else:
             next_mises = {k:st.session_state.base_unit for k in mises_utilisees.keys()}
-
     return gain_net, mise_total, new_bankroll, strategy_name, next_mises
 
 # -------------------------------
@@ -96,7 +111,6 @@ if st.button("Enregistrer Spin"):
     )
     st.session_state.history.append(spin_val)
     st.session_state.last_gain = gain_net
-    st.session_state.bankroll_progress.append(st.session_state.bankroll)
     st.success(f"Spin enregistré: {spin_val}, Gain Net: {gain_net}, Bankroll: {st.session_state.bankroll}")
     st.write("Prochaine stratégie suggérée:", strategy_name)
     st.write("Mises proposées:", next_mises)
@@ -107,15 +121,15 @@ if st.button("Enregistrer Spin"):
 if st.session_state.history:
     df_hist = pd.DataFrame({
         'Spin n°': list(range(1,len(st.session_state.history)+1)),
-        'Segment': st.session_state.history,
-        'Bankroll': st.session_state.bankroll_progress
+        'Segment': st.session_state.history
     })
     st.subheader("Tableau Historique")
     st.dataframe(df_hist)
 
     st.subheader("Graphique Bankroll Spin by Spin")
+    bankroll_list = [st.session_state.bankroll]*len(st.session_state.history)
     plt.figure(figsize=(10,4))
-    plt.plot(df_hist['Spin n°'], df_hist['Bankroll'], marker='o')
+    plt.plot(range(1,len(bankroll_list)+1), bankroll_list, marker='o')
     plt.xlabel("Spin n°")
     plt.ylabel("Bankroll ($)")
     plt.grid(True)
