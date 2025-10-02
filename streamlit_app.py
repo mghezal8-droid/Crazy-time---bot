@@ -15,6 +15,8 @@ if 'base_unit' not in st.session_state:
     st.session_state.base_unit = 1
 if 'last_gain' not in st.session_state:
     st.session_state.last_gain = 0
+if 'bankroll_progress' not in st.session_state:
+    st.session_state.bankroll_progress = [st.session_state.bankroll]
 
 # -------------------------------
 # Barre latérale
@@ -41,12 +43,10 @@ if st.button("Fin historique et commencer"):
 # Fonctions stratégies & EV
 # -------------------------------
 def choose_strategy(history, bankroll):
-    # Exemple simplifié de calcul EV basé sur fréquence
     freq = {s: history.count(s)/len(history) if history else 1/len(segments) for s in segments}
     strategies = ['Martingale1','GodMode','GodMode+Bonus','1+Bonus','NoBet']
-    # Choisir stratégie max EV (exemple simplifié)
+    # Choisir stratégie max EV (simplifiée)
     best = max(strategies, key=lambda s: freq.get('1',0))
-    # Retourne stratégie + mises par segment
     if best=='Martingale1':
         mises = {'1':st.session_state.base_unit}
     elif best=='GodMode':
@@ -70,6 +70,7 @@ def process_spin(spin_result, multiplier, mises_utilisees, bankroll, last_gain, 
             gain = mises_utilisees[spin_result]*mult_table[spin_result]
     gain_net = gain - (mise_total - mises_utilisees.get(spin_result,0))
     new_bankroll = bankroll + gain_net
+
     # Martingale simple : doubler après perte si stratégie Martingale1
     next_mises = mises_utilisees.copy()
     if strategy_name=='Martingale1':
@@ -77,6 +78,7 @@ def process_spin(spin_result, multiplier, mises_utilisees, bankroll, last_gain, 
             next_mises = {k:v*2 for k,v in mises_utilisees.items()}
         else:
             next_mises = {k:st.session_state.base_unit for k in mises_utilisees.keys()}
+
     return gain_net, mise_total, new_bankroll, strategy_name, next_mises
 
 # -------------------------------
@@ -94,6 +96,7 @@ if st.button("Enregistrer Spin"):
     )
     st.session_state.history.append(spin_val)
     st.session_state.last_gain = gain_net
+    st.session_state.bankroll_progress.append(st.session_state.bankroll)
     st.success(f"Spin enregistré: {spin_val}, Gain Net: {gain_net}, Bankroll: {st.session_state.bankroll}")
     st.write("Prochaine stratégie suggérée:", strategy_name)
     st.write("Mises proposées:", next_mises)
@@ -104,15 +107,15 @@ if st.button("Enregistrer Spin"):
 if st.session_state.history:
     df_hist = pd.DataFrame({
         'Spin n°': list(range(1,len(st.session_state.history)+1)),
-        'Segment': st.session_state.history
+        'Segment': st.session_state.history,
+        'Bankroll': st.session_state.bankroll_progress
     })
     st.subheader("Tableau Historique")
     st.dataframe(df_hist)
 
     st.subheader("Graphique Bankroll Spin by Spin")
-    bankroll_list = [st.session_state.bankroll]*len(st.session_state.history)
     plt.figure(figsize=(10,4))
-    plt.plot(range(1,len(bankroll_list)+1), bankroll_list, marker='o')
+    plt.plot(df_hist['Spin n°'], df_hist['Bankroll'], marker='o')
     plt.xlabel("Spin n°")
     plt.ylabel("Bankroll ($)")
     plt.grid(True)
