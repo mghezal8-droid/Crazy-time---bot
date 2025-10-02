@@ -2,119 +2,172 @@ import streamlit as st
 import pandas as pd
 import matplotlib.pyplot as plt
 
-# --- INITIALISATION SESSION ---
+st.set_page_config(layout="wide")
+
+# -------------------------------
+# Initialisation session
+# -------------------------------
 if 'history' not in st.session_state:
     st.session_state.history = []
-
 if 'bankroll' not in st.session_state:
-    st.session_state.bankroll = 150.0
-
+    st.session_state.bankroll = 150
 if 'base_unit' not in st.session_state:
-    st.session_state.base_unit = 1.0
+    st.session_state.base_unit = 1
+if 'last_gain' not in st.session_state:
+    st.session_state.last_gain = 0
 
-if 'dynamic_unit' not in st.session_state:
-    st.session_state.dynamic_unit = st.session_state.base_unit
+# -------------------------------
+# Barre latérale
+# -------------------------------
+st.sidebar.header("Paramètres Crazy Time Bot")
+st.sidebar.number_input("Bankroll initial ($)", 50, 1000, key='bankroll')
+st.sidebar.number_input("Unité de base ($)", 0.2, 10, step=0.1, key='base_unit')
+bonus_multiplier_assumption = st.sidebar.number_input("Hypothèse multiplicateur bonus", 1, 50, value=10)
 
-if 'results' not in st.session_state:
-    st.session_state.results = pd.DataFrame(columns=['Spin','Segment','Unit','Total Mise','Gain Net','Bankroll','Stratégie'])
-
-if 'last_spin_result' not in st.session_state:
-    st.session_state.last_spin_result = 0.0
-
-# --- SIDEBAR ---
-st.sidebar.header("Paramètres du Bot")
-st.session_state.bankroll = st.sidebar.number_input("Bankroll initial ($)", 50, 1000, value=int(st.session_state.bankroll))
-st.session_state.base_unit = st.sidebar.selectbox("Unité de base ($)", [0.5,1,2,5,10], index=1)
-st.session_state.dynamic_unit = st.session_state.base_unit
-no_bet_threshold = st.sidebar.slider("Seuil bankroll critique (%)", 10, 100, 50)
-
-# --- FONCTIONS ---
-def calculate_gain(segment, unit, multiplier):
-    if segment.startswith('Spin Lettre'):
-        gain = (unit * 25 * multiplier) + unit
-    elif segment in ["Crazy Time","Coin Flip","Cash Hunt","Pachinko"]:
-        gain = (unit * multiplier) + unit
-    else:
-        gain = 0
-    return gain
-
-def apply_martingale(unit, gain_net, base_unit):
-    return unit*2 if gain_net <= 0 else base_unit
-
-def update_bankroll(bankroll, total_mise, gain_net):
-    return bankroll - total_mise + gain_net
-
-def suggest_units(bankroll, base_unit):
-    return max(base_unit, round(bankroll/150,2))
-
-def process_spin(segment, multiplier, last_unit, base_unit, strategy_name):
-    unit = suggest_units(st.session_state.bankroll, last_unit)
-    total_mise = unit*13 if strategy_name.startswith("Martingale Lettres + Staying Alive") else unit*3  # ajustement simple pour God Mode
-    gain_net = calculate_gain(segment, unit, multiplier)
-    bankroll = update_bankroll(st.session_state.bankroll, total_mise, gain_net)
-    next_unit = apply_martingale(unit, gain_net, base_unit)
-    return gain_net, total_mise, bankroll, next_unit
-
-# --- INTERFACE ---
-st.title("Crazy Time Bot Optimisé")
-
-# Historique manuel
-st.subheader("Historique des spins")
-segments = ['1','2','5','10','Crazy Time','Coin Flip','Cash Hunt','Pachinko']
-cols = st.columns(4)
+# -------------------------------
+# Entrée historique
+# -------------------------------
+st.header("Historique Spins")
+cols = st.columns([1]*6)
+segments = ['1','2','5','10','Bonus']
 for i, seg in enumerate(segments):
-    if cols[i%4].button(seg):
+    if cols[i].button(seg):
         st.session_state.history.append(seg)
 
-# Live Spin
-st.subheader("Live Spin")
-selected_spin = st.selectbox("Sélectionner segment live", segments)
-mult = st.number_input("Multiplier (1 si pas de multiplicateur)", 1.0, 100.0, 1.0, step=0.1)
-strategy_options = ["Martingale Lettres + Staying Alive","God Mode 2,5,10","God Mode 2,5,10 + Bonus","1+Bonus Combo"]
-strategy_name = st.selectbox("Stratégie live", strategy_options)
+if st.button("Fin historique et commencer"):
+    st.success(f"Historique enregistré ({len(st.session_state.history)} spins)")
 
-if st.button("Spin Live"):
-    gain, total_mise, new_bankroll, next_unit = process_spin(selected_spin, mult, st.session_state.dynamic_unit, st.session_state.base_unit, strategy_name)
-    st.session_state.dynamic_unit = next_unit
-    st.session_state.bankroll = new_bankroll
-    st.session_state.results = pd.concat([st.session_state.results, pd.DataFrame({
-        'Spin':[len(st.session_state.results)+1],
-        'Segment':[selected_spin],
-        'Unit':[next_unit],
-        'Total Mise':[total_mise],
-        'Gain Net':[gain],
-        'Bankroll':[new_bankroll],
-        'Stratégie':[strategy_name]
-    })], ignore_index=True)
-    st.write(f"Gain net: {gain}, Nouveau Bankroll: {new_bankroll}")
-    if new_bankroll < st.session_state.base_unit * (no_bet_threshold/100):
-        st.warning("Bankroll critique! No-bet recommandé.")
+# -------------------------------
+# Fonctions stratégies & EV
+# -------------------------------
+def choose_strategy(history, bankroll):
+    # Exemple simplifié de calcul EV basé sur fréquence
+    freq = {s: history.count(s)/len(history) if history else 1/len(segments) for s in segments}
+    strategies = ['Martingale1','GodMode','GodMode+Bonus','1+Bonus','NoBet']
+    # Choisir stratégie max EV (exemple simplifié)
+    best = max(strategies, key=lambda s: freq.get('1',0))
+    # Retourne stratégie + mises par segment
+    if best=='Martingale1':
+        mises = {'1':st.session_state.base_unit}
+    elif best=='GodMode':
+        mises = {'2':2*st.session_state.base_unit,'5':st.session_state.base_unit,'10':st.session_state.base_unit}
+    elif best=='GodMode+Bonus':
+        mises = {'2':0.8*st.session_state.base_unit,'5':0.4*st.session_state.base_unit,'10':0.4*st.session_state.base_unit,'Bonus':0.2*st.session_state.base_unit}
+    elif best=='1+Bonus':
+        mises = {'1':0.5*st.session_state.base_unit,'Bonus':0.5*st.session_state.base_unit}
+    else:
+        mises = {}
+    return best, mises
 
-# Fin historique et simulation
-if st.button("Fin Historique et Commencer"):
-    st.write("Simulation sur historique...")
-    for seg in st.session_state.history:
-        gain, total_mise, new_bankroll, next_unit = process_spin(seg, 1.0, st.session_state.dynamic_unit, st.session_state.base_unit, strategy_name)
-        st.session_state.dynamic_unit = next_unit
-        st.session_state.bankroll = new_bankroll
-        st.session_state.results = pd.concat([st.session_state.results, pd.DataFrame({
-            'Spin':[len(st.session_state.results)+1],
-            'Segment':[seg],
-            'Unit':[next_unit],
-            'Total Mise':[total_mise],
-            'Gain Net':[gain],
-            'Bankroll':[new_bankroll],
-            'Stratégie':[strategy_name]
-        })], ignore_index=True)
+def process_spin(spin_result, multiplier, mises_utilisees, bankroll, last_gain, strategy_name):
+    mise_total = sum(mises_utilisees.values())
+    gain = 0
+    if spin_result in mises_utilisees:
+        if spin_result=='Bonus':
+            gain = mises_utilisees[spin_result]*multiplier
+        else:
+            mult_table = {'1':2,'2':3,'5':6,'10':11}
+            gain = mises_utilisees[spin_result]*mult_table[spin_result]
+    gain_net = gain - (mise_total - mises_utilisees.get(spin_result,0))
+    new_bankroll = bankroll + gain_net
+    # Martingale simple : doubler après perte si stratégie Martingale1
+    next_mises = mises_utilisees.copy()
+    if strategy_name=='Martingale1':
+        if gain_net <=0:
+            next_mises = {k:v*2 for k,v in mises_utilisees.items()}
+        else:
+            next_mises = {k:st.session_state.base_unit for k in mises_utilisees.keys()}
+    return gain_net, mise_total, new_bankroll, strategy_name, next_mises
 
-# Tableau résultats
-st.subheader("Résultats Spin par Spin")
-st.dataframe(st.session_state.results)
+# -------------------------------
+# Mode Live
+# -------------------------------
+st.header("Spin Live")
+live_cols = st.columns([1]*6)
+spin_val = st.selectbox("Spin Sorti", segments)
+multiplier_val = st.number_input("Multiplicateur réel", 1, 50, value=1, step=1)
 
-# Graphique bankroll
-st.subheader("Évolution du Bankroll")
-fig, ax = plt.subplots()
-ax.plot(st.session_state.results['Spin'], st.session_state.results['Bankroll'], marker='o')
-ax.set_xlabel("Spin")
-ax.set_ylabel("Bankroll ($)")
-st.pyplot(fig)
+if st.button("Enregistrer Spin"):
+    strategy_name, next_mises = choose_strategy(st.session_state.history, st.session_state.bankroll)
+    gain_net, mise_total, st.session_state.bankroll, strategy_name, next_mises = process_spin(
+        spin_val, multiplier_val, next_mises, st.session_state.bankroll, st.session_state.last_gain, strategy_name
+    )
+    st.session_state.history.append(spin_val)
+    st.session_state.last_gain = gain_net
+    st.success(f"Spin enregistré: {spin_val}, Gain Net: {gain_net}, Bankroll: {st.session_state.bankroll}")
+    st.write("Prochaine stratégie suggérée:", strategy_name)
+    st.write("Mises proposées:", next_mises)
+
+# -------------------------------
+# Tableau historique & graphique
+# -------------------------------
+if st.session_state.history:
+    df_hist = pd.DataFrame({
+        'Spin n°': list(range(1,len(st.session_state.history)+1)),
+        'Segment': st.session_state.history
+    })
+    st.subheader("Tableau Historique")
+    st.dataframe(df_hist)
+
+    st.subheader("Graphique Bankroll Spin by Spin")
+    bankroll_list = [st.session_state.bankroll]*len(st.session_state.history)
+    plt.figure(figsize=(10,4))
+    plt.plot(range(1,len(bankroll_list)+1), bankroll_list, marker='o')
+    plt.xlabel("Spin n°")
+    plt.ylabel("Bankroll ($)")
+    plt.grid(True)
+    st.pyplot(plt)
+
+# -------------------------------
+# Simulation Batch
+# -------------------------------
+st.subheader("Simulation Batch")
+batch_units = st.multiselect(
+    "Unités à tester ($)", options=[0.5,1,2,5], default=[st.session_state.base_unit]
+)
+
+if st.button("Lancer Simulation Batch"):
+    batch_results = []
+    for unit in batch_units:
+        bankroll_sim = st.session_state.bankroll
+        history_sim = st.session_state.history.copy()
+        spin_results_sim = []
+
+        for spin_idx, spin_val in enumerate(history_sim):
+            strategy_name, next_mises = choose_strategy(history_sim[:spin_idx], bankroll_sim)
+            next_mises_unit = {seg: mise/unit*unit for seg, mise in next_mises.items()}
+
+            mise_total = sum(next_mises_unit.values())
+            gain = 0
+            if spin_val in next_mises_unit:
+                multiplier = bonus_multiplier_assumption if spin_val=='Bonus' else {'1':2,'2':3,'5':6,'10':11}[spin_val]
+                gain = next_mises_unit[spin_val]*multiplier
+            gain_net = gain - (mise_total - next_mises_unit.get(spin_val,0))
+            bankroll_sim += gain_net
+
+            spin_results_sim.append({
+                'Spin': spin_idx+1,
+                'Segment': spin_val,
+                'Stratégie': strategy_name,
+                'Unit': unit,
+                'Mises': next_mises_unit,
+                'Total Mise': mise_total,
+                'Gain Net': gain_net,
+                'Bankroll': bankroll_sim
+            })
+
+        batch_results.extend(spin_results_sim)
+
+    df_batch = pd.DataFrame(batch_results)
+    st.dataframe(df_batch)
+
+    st.subheader("Graphique bankroll - Simulation Batch")
+    plt.figure(figsize=(12,5))
+    for unit in batch_units:
+        df_unit = df_batch[df_batch['Unit']==unit]
+        plt.plot(df_unit['Spin'], df_unit['Bankroll'], marker='o', label=f'Unit ${unit}')
+    plt.xlabel("Spin n°")
+    plt.ylabel("Bankroll ($)")
+    plt.grid(True)
+    plt.legend()
+    st.pyplot(plt)
