@@ -127,14 +127,14 @@ st.write(f"Stratégie: {strategy_name}")
 st.write("Mises proposées:", next_mises)
 st.write("Mise totale:", round(sum(next_mises.values()),2))
 
-live_col1, live_col2, live_col3 = st.columns([1,1,1])
+live_col1, live_col2 = st.columns([1,1])
 with live_col1:
     if st.button("Enregistrer Spin"):
         gain_net, mise_total, new_bankroll, strategy_name, next_mises = process_spin(
             spin_val, multiplier_val, next_mises, st.session_state.bankroll, st.session_state.last_gain, strategy_name
         )
-        st.session_state.bankroll = new_bankroll
-        st.session_state.last_gain = gain_net
+        st.session_state.bankroll = float(new_bankroll)
+        st.session_state.last_gain = float(gain_net)
         st.session_state.live_history.append(spin_val)
         st.success(f"Spin enregistré: {spin_val}, Gain Net: {gain_net}, Bankroll: {st.session_state.bankroll}")
 with live_col2:
@@ -190,7 +190,6 @@ if st.button("Lancer Simulation Batch"):
     for unit in batch_units:
         bankroll_sim = st.session_state.bankroll
         history_sim = st.session_state.history.copy()
-        spin_results_sim = []
         for spin_idx, spin_val in enumerate(history_sim):
             strategy_name, next_mises = choose_strategy_intelligent(history_sim[:spin_idx], bankroll_sim)
             next_mises_unit = {seg: (v/unit)*unit for seg,v in next_mises.items()}
@@ -201,7 +200,7 @@ if st.button("Lancer Simulation Batch"):
                 gain = next_mises_unit[spin_val]*multiplier
             gain_net = gain - (mise_total - next_mises_unit.get(spin_val,0))
             bankroll_sim += gain_net
-            spin_results_sim.append({
+            batch_results.append({
                 'Spin': spin_idx+1,
                 'Segment': spin_val,
                 'Stratégie': strategy_name,
@@ -211,5 +210,8 @@ if st.button("Lancer Simulation Batch"):
                 'Gain Net': round(gain_net,2),
                 'Bankroll': round(bankroll_sim,2)
             })
-        batch_results.extend(spin_results_sim)
-    df_batch =
+    df_batch = pd.DataFrame(batch_results)
+    st.dataframe(df_batch)
+
+    st.subheader("Graphique bankroll - Simulation Batch")
+    plt.figure
