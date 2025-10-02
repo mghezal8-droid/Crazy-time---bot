@@ -18,8 +18,6 @@ if 'base_unit' not in st.session_state:
 if 'last_gain' not in st.session_state:
     st.session_state.last_gain = 0.0
 
-segments = ['1','2','5','10','Bonus']
-
 # -------------------------------
 # Barre latérale
 # -------------------------------
@@ -52,27 +50,32 @@ critical_threshold_pct = st.sidebar.slider(
 critical_threshold_value = st.session_state.bankroll * (critical_threshold_pct/100)
 
 # -------------------------------
-# Entrée historique manuel
+# Segments
 # -------------------------------
-st.header("Historique Spins (Manuel)")
-cols = st.columns([1]*6)
+segments = ['1','2','5','10','Bonus']
+
+# -------------------------------
+# Entrée historique
+# -------------------------------
+st.header("Historique Spins")
+cols = st.columns(len(segments))
 for i, seg in enumerate(segments):
     if cols[i].button(seg):
         st.session_state.history.append(seg)
 
-col_clear = st.columns([1]*2)
-if col_clear[0].button("Supprimer dernier historique"):
+if st.button("Supprimer dernier historique"):
     if st.session_state.history:
         st.session_state.history.pop()
 
-if col_clear[1].button("Fin historique et commencer"):
+if st.button("Fin historique et commencer"):
     st.success(f"Historique enregistré ({len(st.session_state.history)} spins)")
 
 # -------------------------------
-# Fonctions stratégies & EV intelligent
+# Fonctions stratégie / EV
 # -------------------------------
 def compute_segment_probabilities(history):
-    segment_count = {'1':1,'2':2,'5':2,'10':1,'Bonus':1}
+    # Probabilités pondérées avec base et historique
+    segment_count = {'1':1,'2':2,'5':2,'10':1,'Bonus':1}  # segments sur la roue
     total_segments = sum(segment_count.values())
     base_prob = {k:v/total_segments for k,v in segment_count.items()}
     hist_weight = {k:(history.count(k)/len(history) if history else 0) for k in segment_count.keys()}
@@ -92,7 +95,7 @@ def choose_strategy_intelligent(history, bankroll):
 def process_spin(spin_result, multiplier, mises_utilisees, bankroll, last_gain, strategy_name):
     mise_total = sum(mises_utilisees.values())
     gain = 0
-    if spin_result in mises_utilisees:
+    if spin_result in mises_utilisees and mises_utilisees[spin_result]>0:
         if spin_result=='Bonus':
             gain = mises_utilisees[spin_result]*multiplier
         else:
@@ -101,6 +104,7 @@ def process_spin(spin_result, multiplier, mises_utilisees, bankroll, last_gain, 
     gain_net = gain - (mise_total - mises_utilisees.get(spin_result,0))
     new_bankroll = bankroll + gain_net
 
+    # Martingale simple : doubler après perte
     next_mises = mises_utilisees.copy()
     if 'Martingale' in strategy_name:
         if gain_net <= 0:
@@ -108,29 +112,40 @@ def process_spin(spin_result, multiplier, mises_utilisees, bankroll, last_gain, 
         else:
             next_mises = {k:(st.session_state.base_unit if v>0 else 0) for k,v in mises_utilisees.items()}
 
-    return float(gain_net), float(mise_total), float(new_bankroll), strategy_name, next_mises
+    return gain_net, mise_total, new_bankroll, strategy_name, next_mises
 
 # -------------------------------
-# Prochaine stratégie suggérée (avant live spin)
+# Suggestion stratégie prochaine spin
 # -------------------------------
-st.header("Prochaine stratégie suggérée")
-suggestion_name, suggestion_mises = choose_strategy_intelligent(st.session_state.history, st.session_state.bankroll)
-st.write("Stratégie:", suggestion_name)
-st.write("Mises proposées:", suggestion_mises)
+st.subheader("Prochaine stratégie suggérée")
+suggest_strategy_name, suggest_mises = choose_strategy_intelligent(
+    st.session_state.history, st.session_state.bankroll
+)
+st.write("Stratégie:", suggest_strategy_name)
+st.write("Mises proposées:", suggest_mises)
 
 # -------------------------------
-# Mode Live
+# Mode Live Spin
 # -------------------------------
 st.header("Spin Live")
-live_cols = st.columns([1]*6)
+live_cols = st.columns(len(segments))
 spin_val = st.selectbox("Spin Sorti", segments)
 multiplier_val = st.number_input("Multiplicateur réel", 1, 50, value=1, step=1)
 
-col_live = st.columns([1]*2)
-if col_live[0].button("Enregistrer Spin"):
+if st.button("Supprimer dernier live spin"):
+    if st.session_state.live_history:
+        st.session_state.live_history.pop()
+
+if st.button("Enregistrer Spin"):
+    strategy_name, next_mises = choose_strategy_intelligent(st.session_state.history, st.session_state.bankroll)
+    if strategy_name=="No-Bet":
+        st.warning(f"⚠️ Bankroll critique ({st.session_state.bankroll}$). No-Bet appliqué!")
+        next_mises = {k:0 for k in segments}
+
     gain_net, mise_total, new_bankroll, strategy_name, next_mises = process_spin(
-        spin_val, multiplier_val, suggestion_mises, st.session_state.bankroll, st.session_state.last_gain, suggestion_name
+        spin_val, multiplier_val, next_mises, st.session_state.bankroll, st.session_state.last_gain, strategy_name
     )
+
     st.session_state.bankroll = new_bankroll
     st.session_state.last_gain = gain_net
     st.session_state.live_history.append(spin_val)
@@ -138,17 +153,13 @@ if col_live[0].button("Enregistrer Spin"):
     st.write("Prochaine stratégie suggérée:", strategy_name)
     st.write("Mises proposées:", next_mises)
 
-if col_live[1].button("Supprimer dernier live spin"):
-    if st.session_state.live_history:
-        st.session_state.live_history.pop()
-
 # -------------------------------
-# Tableau historique complet
+# Tableau Historique Spin by Spin
 # -------------------------------
-if st.session_state.history or st.session_state.live_history:
+if st.session_state.history:
     df_rows = []
     temp_bankroll = st.session_state.bankroll
-    temp_history = st.session_state.history + st.session_state.live_history
+    temp_history = st.session_state.history.copy()
     for idx, spin in enumerate(temp_history):
         strategy_name, mises = choose_strategy_intelligent(temp_history[:idx], temp_bankroll)
         multiplier = bonus_multiplier_assumption if spin=='Bonus' else {'1':2,'2':3,'5':6,'10':11}[spin]
@@ -185,18 +196,15 @@ batch_units = st.multiselect(
     "Unités à tester ($)", options=[0.5,1,2,5], default=[st.session_state.base_unit]
 )
 
-if st.button("Appliquer Batch sur toute l'historique") or st.button("Lancer Simulation Batch"):
+if st.button("Lancer Simulation Batch"):
     batch_results = []
     for unit in batch_units:
         bankroll_sim = st.session_state.bankroll
-        history_sim = st.session_state.history + st.session_state.live_history
+        history_sim = st.session_state.history.copy()
         spin_results_sim = []
 
         for spin_idx, spin_val in enumerate(history_sim):
             strategy_name, next_mises = choose_strategy_intelligent(history_sim[:spin_idx], bankroll_sim)
             next_mises_unit = {seg: (v/unit)*unit for seg,v in next_mises.items()}
 
-            mise_total = sum(next_mises_unit.values())
-            gain = 0
-            if spin_val in next_mises_unit:
-                multiplier = bonus_multiplier_assumption if spin_val=='Bonus' else {'1':2,'2':3
+            mise_total
