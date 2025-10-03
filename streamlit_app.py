@@ -29,7 +29,6 @@ segments = ['1','2','5','10','Cash Hunt','Pachinko','Coin Flip','Crazy Time']
 # Barre latérale
 # -------------------------------
 st.sidebar.header("Paramètres Crazy Time Bot")
-
 initial_bankroll_input = st.sidebar.number_input(
     "Bankroll initial ($)", min_value=50.0, max_value=10000.0,
     value=float(st.session_state.initial_bankroll), step=1.0
@@ -87,6 +86,19 @@ else:
     st.write("Aucun spin manuel enregistré.")
 
 # -------------------------------
+# Saisie multiplicateurs réels
+# -------------------------------
+st.subheader("⚡ Ajuster multiplicateurs réels par segment")
+mult_real = {}
+mult_cols = st.columns(4)
+for i, seg in enumerate(segments):
+    col = mult_cols[i%4]
+    mult_real[seg] = col.number_input(
+        f"{seg} x", min_value=1, max_value=200,
+        value=bonus_multiplier_assumption, step=1, key=f"mult_{seg}"
+    )
+
+# -------------------------------
 # Fonctions probabilités & stratégies
 # -------------------------------
 def compute_segment_probabilities(history):
@@ -94,7 +106,6 @@ def compute_segment_probabilities(history):
     total_segments = sum(segment_count.values())
     base_prob = {k: v/total_segments for k,v in segment_count.items()}
     hist_weight = {k: (history.count(k)/len(history) if history else 0) for k in segment_count.keys()}
-    # Moyenne pondérée prob théorique + tendance historique
     prob = {k: 0.5*base_prob[k] + 0.5*hist_weight[k] for k in segment_count.keys()}
     return prob
 
@@ -105,16 +116,11 @@ def adjust_unit(bankroll):
         return st.session_state.base_unit * 0.5
     return st.session_state.base_unit
 
-def process_spin(spin_result, mises_utilisees, bankroll):
-    mult_table = {'1':2,'2':3,'5':6,'10':11,
-                  'Cash Hunt':bonus_multiplier_assumption,
-                  'Pachinko':bonus_multiplier_assumption,
-                  'Coin Flip':bonus_multiplier_assumption,
-                  'Crazy Time':bonus_multiplier_assumption}
+def process_spin_real(spin_result, mises_utilisees, bankroll, mult_real):
     mise_total = sum(mises_utilisees.values())
     gain = 0.0
     if spin_result in mises_utilisees and mises_utilisees[spin_result]>0:
-        gain = mises_utilisees[spin_result]*mult_table[spin_result]
+        gain = mises_utilisees[spin_result]*mult_real.get(spin_result,1)
     gain_net = gain - (mise_total - mises_utilisees.get(spin_result,0.0))
     new_bankroll = float(bankroll) + float(gain_net)
     return float(gain_net), float(mise_total), float(new_bankroll)
@@ -149,14 +155,14 @@ def choose_strategy_intelligent(history, bankroll):
                                'Cash Hunt':round(1*scale,2),'Pachinko':round(1*scale,2),
                                'Coin Flip':round(1*scale,2),'Crazy Time':round(1*scale,2)}
 
-    # 🔥 Bonus tweak : si aucun bonus sorti depuis 15 spins, favoriser les stratégies avec bonus
+    # Favoriser stratégies avec bonus si absents depuis 15 spins
     recent_history = history[-15:] if len(history)>=15 else history
     if not any(seg in recent_history for seg in ["Cash Hunt","Pachinko","Coin Flip","Crazy Time"]):
         bonus_strats = {name:strat for name,strat in strategies.items() if "Bonus" in name}
         if bonus_strats:
             strategies = bonus_strats
 
-    # Choix basé sur probabilité pondérée (max segment probable)
+    # Choix basé sur probabilité pondérée
     max_prob = max([probs.get(seg,0) for seg in segments])
     candidates = [name for name,strat in strategies.items() if any(strat[seg]>0 and probs[seg]==max_prob for seg in segments)]
     if not candidates:
@@ -183,7 +189,6 @@ else:
 # -------------------------------
 st.header("Spin Live")
 spin_val = st.selectbox("Spin Sorti", segments)
-multiplier_val = st.number_input("Multiplicateur réel (pour bonus)",1,200,value=1,step=1)
 
 live_col1,live_col2 = st.columns([1,1])
 with live_col1:
@@ -191,7 +196,7 @@ with live_col1:
         strat_name, strat_mises = choose_strategy_intelligent(st.session_state.history, st.session_state.bankroll)
         if strat_name=="No-Bet":
             strat_mises = {k:0.0 for k in segments}
-        gain_net,mise_total,new_bankroll = process_spin(spin_val,strat_mises,st.session_state.bankroll)
+        gain_net, mise_total, new_bankroll = process_spin_real(spin_val, strat_mises, st.session_state.bankroll, mult_real)
         st.session_state.history.append(spin_val)
         st.session_state.live_history.append(spin_val)
         st.session_state.last_gain = float(gain_net)
@@ -275,7 +280,7 @@ if st.button("Tester Stratégie"):
         else:
             mises = {k:0.0 for k in segments}
 
-        gain_net, mise_total, bankroll_test = process_spin(spin, mises, bankroll_test)
+        gain_net, mise_total, bankroll_test = process_spin_real(spin, mises, bankroll_test, mult_real)
         test_results.append({
             "Spin #": i,
             "Résultat": spin,
