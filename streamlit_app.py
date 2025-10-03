@@ -128,6 +128,7 @@ def estimate_ev(mises, probs):
         ev += probs[seg]*gain_net_if_hit
     return ev
 
+# 🔥 Stratégie intelligente avec variation
 def choose_strategy_intelligent(history, bankroll):
     if float(bankroll) <= float(critical_threshold_value):
         return "No-Bet", {k:0.0 for k in segments}, 0.0
@@ -151,11 +152,8 @@ def choose_strategy_intelligent(history, bankroll):
 
     evs = {name: estimate_ev(mises,probs) for name,mises in strategies.items()}
     max_ev = max(evs.values())
-
-    # ✅ VARIATION : garder plusieurs choix proches du max
     candidates = [name for name,ev in evs.items() if ev >= max_ev*0.95]
 
-    # ✅ si aucun bonus sorti récemment → favoriser les stratégies avec bonus
     if len(history) >= 15 and not any(seg in history[-15:] for seg in ["Cash Hunt","Pachinko","Coin Flip","Crazy Time"]):
         bonus_strats = [name for name in candidates if "Bonus" in name]
         if bonus_strats:
@@ -184,7 +182,7 @@ def process_spin(spin_result,mises_utilisees,bankroll):
 # -------------------------------
 # Suggestion actuelle
 # -------------------------------
-st.subheader("📊 Suggestion stratégie (basée sur l'historique)")
+st.subheader("📊 Stratégie intelligente avec variation")
 if st.session_state.history:
     strat_name, strat_mises, strat_ev = choose_strategy_intelligent(st.session_state.history, st.session_state.bankroll)
     st.write("Stratégie suggérée:", strat_name)
@@ -200,25 +198,37 @@ st.header("Spin Live")
 spin_val = st.selectbox("Spin Sorti", segments)
 multiplier_val = st.number_input("Multiplicateur réel (pour bonus)",1,200,value=1,step=1)
 
-if st.button("Enregistrer Spin"):
-    strat_name, strat_mises, strat_ev = choose_strategy_intelligent(st.session_state.history, st.session_state.bankroll)
-    if strat_name=="No-Bet":
-        strat_mises = {k:0.0 for k in segments}
-    gain_net,mise_total,new_bankroll = process_spin(spin_val,strat_mises,st.session_state.bankroll)
-    st.session_state.history.append(spin_val)
-    st.session_state.live_history.append(spin_val)
-    st.session_state.last_gain = float(gain_net)
-    st.session_state.bankroll = float(new_bankroll)
-    st.session_state.results_table.append({
-        "Spin #": len(st.session_state.results_table)+1,
-        "Résultat": spin_val,
-        "Stratégie": strat_name,
-        "Mises $": {k:round(v,2) for k,v in strat_mises.items()},
-        "Mise Totale": round(mise_total,2),
-        "Gain Net": round(gain_net,2),
-        "Bankroll": round(new_bankroll,2)
-    })
-    st.success(f"Spin: {spin_val} — Gain net: {round(gain_net,2)} — Bankroll: {round(new_bankroll,2)}")
+live_col1,live_col2 = st.columns([1,1])
+with live_col1:
+    if st.button("Enregistrer Spin"):
+        strat_name, strat_mises, strat_ev = choose_strategy_intelligent(st.session_state.history, st.session_state.bankroll)
+        if strat_name=="No-Bet":
+            strat_mises = {k:0.0 for k in segments}
+        gain_net,mise_total,new_bankroll = process_spin(spin_val,strat_mises,st.session_state.bankroll)
+        st.session_state.history.append(spin_val)
+        st.session_state.live_history.append(spin_val)
+        st.session_state.last_gain = float(gain_net)
+        st.session_state.bankroll = float(new_bankroll)
+        st.session_state.results_table.append({
+            "Spin #": len(st.session_state.results_table)+1,
+            "Résultat": spin_val,
+            "Stratégie": strat_name,
+            "Mises $": {k:round(v,2) for k,v in strat_mises.items()},
+            "Mise Totale": round(mise_total,2),
+            "Gain Net": round(gain_net,2),
+            "Bankroll": round(new_bankroll,2)
+        })
+        st.success(f"Spin: {spin_val} — Gain net: {round(gain_net,2)} — Bankroll: {round(new_bankroll,2)}")
+
+with live_col2:
+    if st.button("Supprimer dernier live spin"):
+        if st.session_state.live_history:
+            st.session_state.live_history.pop()
+        if st.session_state.results_table:
+            st.session_state.results_table.pop()
+        if st.session_state.history:
+            st.session_state.history.pop()
+        st.warning("Dernier live spin supprimé.")
 
 # -------------------------------
 # Tableau live
@@ -248,7 +258,6 @@ strategy_choice = st.selectbox(
     ["Martingale_1","Martingale_2","Martingale_5","Martingale_10",
      "God Mode","God Mode + Bonus","1 + Bonus","No-Bet"]
 )
-
 if st.button("Tester Stratégie"):
     bankroll_test = st.session_state.initial_bankroll
     test_results = []
