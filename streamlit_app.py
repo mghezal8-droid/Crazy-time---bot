@@ -114,8 +114,10 @@ def adjust_unit(bankroll):
     return st.session_state.base_unit
 
 def estimate_ev(mises, probs):
-    mult_table = {'1':2,'2':3,'5':6,'10':11,'Cash Hunt':bonus_multiplier_assumption,
-                  'Pachinko':bonus_multiplier_assumption,'Coin Flip':bonus_multiplier_assumption,
+    mult_table = {'1':2,'2':3,'5':6,'10':11,
+                  'Cash Hunt':bonus_multiplier_assumption,
+                  'Pachinko':bonus_multiplier_assumption,
+                  'Coin Flip':bonus_multiplier_assumption,
                   'Crazy Time':bonus_multiplier_assumption}
     mise_total = sum(mises.values())
     ev = 0.0
@@ -123,37 +125,48 @@ def estimate_ev(mises, probs):
         bet = mises.get(seg,0)
         if bet <= 0:
             continue
-        payout = mult_table[seg]
-        gain_net_if_hit = bet*payout - (mise_total - bet)
+        gain_net_if_hit = bet*mult_table[seg] - (mise_total - bet)
         ev += probs[seg]*gain_net_if_hit
     return ev
 
-# 🔥 Stratégie intelligente avec variation
+# -------------------------------
+# Stratégie intelligente améliorée
+# -------------------------------
 def choose_strategy_intelligent(history, bankroll):
     if float(bankroll) <= float(critical_threshold_value):
         return "No-Bet", {k:0.0 for k in segments}, 0.0
+
     unit = adjust_unit(bankroll)
     scale = unit / st.session_state.base_unit if st.session_state.base_unit>0 else 1.0
     probs = compute_segment_probabilities(history)
 
     strategies = {}
+
+    # Martingale ciblée sur le segment le plus probable
     sorted_probs = sorted(probs.items(), key=lambda x:x[1], reverse=True)
     target_segment = sorted_probs[0][0]
     strategies[f"Martingale_{target_segment}"] = {k:(unit if k==target_segment else 0.0) for k in segments}
 
+    # God Mode
     strategies["God Mode"] = {'1':0.0,'2':round(3*scale,2),'5':round(2*scale,2),'10':round(1*scale,2),
                               'Cash Hunt':0.0,'Pachinko':0.0,'Coin Flip':0.0,'Crazy Time':0.0}
+    # God Mode + Bonus
     strategies["God Mode + Bonus"] = {'1':0.0,'2':round(3*scale,2),'5':round(2*scale,2),'10':round(1*scale,2),
                                      'Cash Hunt':round(1*scale,2),'Pachinko':round(1*scale,2),
                                      'Coin Flip':round(1*scale,2),'Crazy Time':round(1*scale,2)}
+    # 1 + Bonus
     strategies["1 + Bonus"] = {'1':round(4*scale,2),'2':0.0,'5':0.0,'10':0.0,
                                'Cash Hunt':round(1*scale,2),'Pachinko':round(1*scale,2),
                                'Coin Flip':round(1*scale,2),'Crazy Time':round(1*scale,2)}
 
+    # Évaluer EV
     evs = {name: estimate_ev(mises,probs) for name,mises in strategies.items()}
     max_ev = max(evs.values())
+
+    # 🔥 Variation : toutes stratégies proches du max EV
     candidates = [name for name,ev in evs.items() if ev >= max_ev*0.95]
 
+    # 🔥 Bonus favorisés si absents depuis 15 derniers spins
     if len(history) >= 15 and not any(seg in history[-15:] for seg in ["Cash Hunt","Pachinko","Coin Flip","Crazy Time"]):
         bonus_strats = [name for name in candidates if "Bonus" in name]
         if bonus_strats:
@@ -167,9 +180,14 @@ def choose_strategy_intelligent(history, bankroll):
         return "No-Bet",{k:0.0 for k in segments},best_ev
     return best_name,best_mises,best_ev
 
+# -------------------------------
+# Calcul spin
+# -------------------------------
 def process_spin(spin_result,mises_utilisees,bankroll):
-    mult_table = {'1':2,'2':3,'5':6,'10':11,'Cash Hunt':bonus_multiplier_assumption,
-                  'Pachinko':bonus_multiplier_assumption,'Coin Flip':bonus_multiplier_assumption,
+    mult_table = {'1':2,'2':3,'5':6,'10':11,
+                  'Cash Hunt':bonus_multiplier_assumption,
+                  'Pachinko':bonus_multiplier_assumption,
+                  'Coin Flip':bonus_multiplier_assumption,
                   'Crazy Time':bonus_multiplier_assumption}
     mise_total = sum(mises_utilisees.values())
     gain = 0.0
@@ -180,9 +198,9 @@ def process_spin(spin_result,mises_utilisees,bankroll):
     return float(gain_net), float(mise_total), float(new_bankroll)
 
 # -------------------------------
-# Suggestion actuelle
+# Suggestion stratégie intelligente
 # -------------------------------
-st.subheader("📊 Stratégie intelligente avec variation")
+st.subheader("📊 Suggestion stratégie intelligente")
 if st.session_state.history:
     strat_name, strat_mises, strat_ev = choose_strategy_intelligent(st.session_state.history, st.session_state.bankroll)
     st.write("Stratégie suggérée:", strat_name)
@@ -250,7 +268,7 @@ else:
     st.write("Aucun spin live enregistré.")
 
 # -------------------------------
-# Tester une stratégie
+# Tester une stratégie manuellement avec graphique
 # -------------------------------
 st.subheader("⚡ Tester une stratégie manuellement")
 strategy_choice = st.selectbox(
@@ -275,9 +293,6 @@ if st.button("Tester Stratégie"):
             mises = {'1':0.0,'2':3,'5':2,'10':1,'Cash Hunt':1,'Pachinko':1,'Coin Flip':1,'Crazy Time':1}
         elif strategy_choice=="1 + Bonus":
             mises = {'1':4,'2':0,'5':0,'10':0,'Cash Hunt':1,'Pachinko':1,'Coin Flip':1,'Crazy Time':1}
-        else:
-            mises = {k:0.0 for k in segments}
-
         gain_net,mise_total,new_bankroll = process_spin(spin,mises,bankroll_test)
         bankroll_test = new_bankroll
         test_results.append({
@@ -290,12 +305,12 @@ if st.button("Tester Stratégie"):
         })
 
     df_test = pd.DataFrame(test_results)
-    st.dataframe(df_test, use_container_width=True)
+    st.dataframe(df_test,use_container_width=True)
 
     st.subheader("📊 Évolution bankroll (test stratégie)")
-    fig, ax = plt.subplots()
-    ax.plot(df_test["Spin #"], df_test["Bankroll"], marker='o', label='Bankroll (test)')
-    ax.axhline(y=st.session_state.initial_bankroll, color='gray', linestyle='--', label='Bankroll initiale')
+    fig,ax = plt.subplots()
+    ax.plot(df_test["Spin #"],df_test["Bankroll"],marker='o',label='Bankroll (test)')
+    ax.axhline(y=st.session_state.initial_bankroll,color='gray',linestyle='--',label='Bankroll initiale')
     ax.set_xlabel("Spin #")
     ax.set_ylabel("Bankroll ($)")
     ax.legend()
