@@ -139,7 +139,7 @@ def choose_strategy_intelligent(history, bankroll):
     return best_name, best_mises
 
 # -------------------------------
-# UI boutons segments (mobile friendly)
+# UI boutons segments
 # -------------------------------
 st.header("Historique Spins (manuel)")
 def segment_buttons_grid(segments, cols_per_row=4):
@@ -309,4 +309,43 @@ if st.button("Tester Stratégie (simulate)"):
             mises = {k:(st.session_state.base_unit if k == target else 0.0) for k in segments}
         elif strategy_choice == "God Mode":
             scale = adjust_unit(bankroll_test) / st.session_state.base_unit
-            mises = {'1':0.0,'2':round(3*scale,
+            mises = {'1':0.0,'2':round(3*scale,2),'5':round(2*scale,2),'10':round(1*scale,2),
+                     'Cash Hunt':0.0,'Pachinko':0.0,'Coin Flip':0.0,'Crazy Time':0.0}
+        elif strategy_choice == "God Mode + Bonus":
+            scale = adjust_unit(bankroll_test) / st.session_state.base_unit
+            mises = {'1':0.0,'2':round(3*scale,2),'5':round(2*scale,2),'10':round(1*scale,2),
+                     'Cash Hunt':round(1*scale,2),'Pachinko':round(1*scale,2),
+                     'Coin Flip':round(1*scale,2),'Crazy Time':round(1*scale,2)}
+        elif strategy_choice == "1 + Bonus":
+            scale = adjust_unit(bankroll_test) / st.session_state.base_unit
+            mises = {'1':round(4*scale,2),'2':0.0,'5':0.0,'10':0.0,
+                     'Cash Hunt':round(1*scale,2),'Pachinko':round(1*scale,2),
+                     'Coin Flip':round(1*scale,2),'Crazy Time':round(1*scale,2)}
+        else:
+            mises = {k:0.0 for k in segments}
+
+        gain_net, gain_brut, mise_total, bankroll_test, mult_applique = process_spin_real(spin, mises, bankroll_test, mult_real_for_spin)
+        test_results.append({
+            "Spin #": i,
+            "Résultat": spin,
+            "Mises": mises,
+            "Mise Totale": mise_total,
+            "Gain Brut": gain_brut,
+            "Gain Net": gain_net,
+            "Multiplicateur appliqué": mult_applique,
+            "Bankroll": bankroll_test
+        })
+
+    df_test = pd.DataFrame(test_results)
+    st.dataframe(df_test, use_container_width=True)
+
+    # Graphique bankroll
+    st.subheader("📊 Évolution bankroll (test stratégie)")
+    fig, ax = plt.subplots()
+    ax.plot(df_test["Spin #"], df_test["Bankroll"], marker='o', label='Bankroll (test)')
+    ax.axhline(y=st.session_state.initial_bankroll, color='gray', linestyle='--', label='Bankroll initiale')
+    ax.set_xlabel("Spin #")
+    ax.set_ylabel("Bankroll ($)")
+    ax.legend()
+    ax.grid(True)
+    st.pyplot(fig)
