@@ -27,7 +27,7 @@ if 'last_suggestion_name' not in st.session_state:
 if 'last_suggestion_mises' not in st.session_state:
     st.session_state.last_suggestion_mises = {}
 if 'mult_real_manual' not in st.session_state:
-    st.session_state.mult_real_manual = None
+    st.session_state.mult_real_manual = 1
 
 # -------------------------------
 # Segments
@@ -78,13 +78,12 @@ def adjust_unit(bankroll):
     return st.session_state.base_unit
 
 def process_spin_real(spin_result, mises_utilisees, bankroll, mult_manual=None):
-    """Calcule le gain net, brut, total mise, bankroll après spin. 
-       Multiplier standard = x1 sauf si mult_manual défini.
-    """
-    mult_table = {'1':1,'2':1,'5':1,'10':1,'Cash Hunt':1,'Pachinko':1,'Coin Flip':1,'Crazy Time':1}
+    """Calcule gain net, brut, mise totale, bankroll après spin"""
+    mult_table = {seg:1 for seg in segments}  # x1 par défaut
     if mult_manual is not None:
         for k in mult_table.keys():
             mult_table[k] = mult_manual
+
     mise_total = sum(mises_utilisees.values())
     gain_brut = 0.0
     mult_applique = 0
@@ -117,7 +116,6 @@ def choose_strategy_intelligent(history, bankroll):
                                'Cash Hunt':round(1*scale,2),'Pachinko':round(1*scale,2),
                                'Coin Flip':round(1*scale,2),'Crazy Time':round(1*scale,2)}
 
-    # Élimine les doubles suggestions
     max_prob = max([probs.get(seg,0) for seg in segments])
     candidates = [name for name,strat in strategies.items() if any(strat.get(seg,0)>0 and probs.get(seg,0)==max_prob for seg in segments)]
     if not candidates:
@@ -174,10 +172,10 @@ else:
 # -------------------------------
 # Champ multiplicateur manuel uniquement
 # -------------------------------
-st.subheader("⚡ Multiplicateur top slot manuel (applique x1 par défaut)")
+st.subheader("⚡ Multiplicateur top slot manuel (x1 par défaut)")
 mult_manual_input = st.number_input(
     "x (manuel)", min_value=1, max_value=200,
-    value=st.session_state.mult_real_manual or 1, step=1
+    value=st.session_state.mult_real_manual, step=1
 )
 st.session_state.mult_real_manual = mult_manual_input
 
@@ -191,7 +189,7 @@ def display_next_suggestion():
         st.markdown("**Mises proposées :**")
         st.write({k: round(v,2) for k,v in st.session_state.last_suggestion_mises.items()})
     else:
-        st.write("Pas encore de suggestion. Appuie sur 'Fin historique' ou enregistre un spin live pour calculer.")
+        st.write("Pas encore de suggestion. Appuie sur 'Fin historique' ou enregistre un spin live.")
 
 display_next_suggestion()
 
@@ -207,3 +205,66 @@ with live_col1:
         mises_for_spin = st.session_state.last_suggestion_mises.copy() if st.session_state.last_suggestion_mises else {}
         gain_net, gain_brut, mise_total, new_bankroll, mult_applique = process_spin_real(
             spin_val,
+            mises_for_spin,
+            st.session_state.bankroll,
+            st.session_state.mult_real_manual
+        )
+
+        st.session_state.history.append(spin_val)
+        st.session_state.live_history.append(spin_val)
+        st.session_state.last_gain = float(gain_net)
+        st.session_state.bankroll = float(new_bankroll)
+        st.session_state.results_table.append({
+            "Spin #": len(st.session_state.results_table) + 1,
+            "Résultat": spin_val,
+            "Stratégie utilisée": st.session_state.last_suggestion_name,
+            "Mises $": {k: round(v,2) for k,v in mises_for_spin.items()},
+            "Mise Totale": round(mise_total,2),
+            "Gain Brut": round(gain_brut,2),
+            "Gain Net": round(gain_net,2),
+            "Multiplicateur appliqué": mult_applique,
+            "Bankroll": round(new_bankroll,2)
+        })
+
+        # Recalculer suggestion
+        next_name, next_mises = choose_strategy_intelligent(st.session_state.history, st.session_state.bankroll)
+        st.session_state.last_suggestion_name = next_name
+        st.session_state.last_suggestion_mises = next_mises
+        display_next_suggestion()
+
+        st.success(f"Spin enregistré : {spin_val} x{mult_applique} — Gain net: {round(gain_net,2)} — Bankroll: {round(new_bankroll,2)}")
+
+with live_col2:
+    if st.button("Supprimer dernier live spin"):
+        if st.session_state.live_history:
+            st.session_state.live_history.pop()
+        if st.session_state.results_table:
+            st.session_state.results_table.pop()
+        if st.session_state.history:
+            st.session_state.history.pop()
+        st.warning("Dernier live spin supprimé.")
+        # Recalculer suggestion
+        next_name, next_mises = choose_strategy_intelligent(st.session_state.history, st.session_state.bankroll)
+        st.session_state.last_suggestion_name = next_name
+        st.session_state.last_suggestion_mises = next_mises
+        display_next_suggestion()
+
+# -------------------------------
+# Tableau live + graphique bankroll
+# -------------------------------
+st.subheader("📈 Historique des Spins Live")
+if st.session_state.results_table:
+    df_results = pd.DataFrame(st.session_state.results_table)
+    st.dataframe(df_results, use_container_width=True)
+
+    st.subheader("📊 Évolution Bankroll")
+    fig, ax = plt.subplots()
+    ax.plot(df_results["Spin #"], df_results["Bankroll"], marker='o', label='Bankroll')
+    ax.axhline(y=st.session_state.initial_bankroll, color='gray', linestyle='--', label='Bankroll initiale')
+    ax.set_xlabel("Spin #")
+    ax.set_ylabel("Bankroll ($)")
+    ax.legend()
+    ax.grid(True)
+    st.pyplot(fig)
+else:
+    st.write("Aucun spin live enregistré.")
