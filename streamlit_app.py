@@ -22,13 +22,14 @@ if 'base_unit' not in st.session_state:
     st.session_state.base_unit = 1.0
 if 'last_gain' not in st.session_state:
     st.session_state.last_gain = 0.0
-
-# stockage de la dernière suggestion (nom + mises) pour l'utiliser quand tu enregistres le spin
 if 'last_suggestion_name' not in st.session_state:
     st.session_state.last_suggestion_name = None
 if 'last_suggestion_mises' not in st.session_state:
     st.session_state.last_suggestion_mises = {}
 
+# -------------------------------
+# Segments
+# -------------------------------
 segments = ['1','2','5','10','Cash Hunt','Pachinko','Coin Flip','Crazy Time']
 
 # -------------------------------
@@ -54,6 +55,11 @@ if base_unit_input != st.session_state.base_unit:
 if 'mult_real_default' not in st.session_state:
     st.session_state.mult_real_default = 10
 
+bonus_multiplier_assumption = st.sidebar.number_input(
+    "Hypothèse multiplicateur bonus (pour estimation/test)", min_value=1, max_value=200,
+    value=10, step=1
+)
+
 critical_threshold_pct = st.sidebar.slider(
     "Seuil critique bankroll (%)", min_value=1, max_value=100,
     value=25, step=1
@@ -61,82 +67,14 @@ critical_threshold_pct = st.sidebar.slider(
 critical_threshold_value = float(st.session_state.initial_bankroll) * (critical_threshold_pct/100)
 
 # -------------------------------
-# UI compacte : boutons segments (grille 4 colonnes) - mobile friendly
-# -------------------------------
-st.header("Historique Spins (manuel)")
-
-def segment_buttons_grid(segments, cols_per_row=4):
-    rows = (len(segments) + cols_per_row - 1) // cols_per_row
-    idx = 0
-    for r in range(rows):
-        cols = st.columns(cols_per_row)
-        for c in range(cols_per_row):
-            if idx >= len(segments):
-                break
-            seg = segments[idx]
-            # clé unique par segment + index pour éviter duplication d'état
-            if cols[c].button(seg, key=f"segbtn_{seg}_{idx}"):
-                st.session_state.history.append(seg)
-            idx += 1
-
-segment_buttons_grid(segments, cols_per_row=4)
-
-# actions compacts
-act_col1, act_col2 = st.columns([1,1])
-with act_col1:
-    if st.button("↩ Suppr dernier", key="btn_suppr_hist"):
-        if st.session_state.history:
-            st.session_state.history.pop()
-            st.success("Dernier historique supprimé.")
-with act_col2:
-    if st.button("🏁 Fin historique", key="btn_fin_hist"):
-        st.success(f"Historique enregistré ({len(st.session_state.history)} spins). Le bot est prêt à suggérer.")
-        # --- CALCULER ET STOCKER LA STRAT POUR LE 1ER LIVE SPIN ---
-        if st.session_state.history:
-            next_name, next_mises = None, {}
-            next_name, next_mises = None, {}
-            # appel de la fonction intelligente (définie plus bas)
-            next_name, next_mises = choose_strategy_intelligent(st.session_state.history, st.session_state.bankroll)
-            st.session_state.last_suggestion_name = next_name
-            st.session_state.last_suggestion_mises = next_mises
-        else:
-            st.warning("Historique vide — aucune suggestion calculée.")
-
-# affichage du tableau historique manuel (sans simulation)
-st.subheader("Tableau Historique Manuel")
-if st.session_state.history:
-    df_manual = pd.DataFrame({
-        "Spin n°": list(range(1, len(st.session_state.history)+1)),
-        "Segment": st.session_state.history
-    })
-    st.dataframe(df_manual, use_container_width=True)
-else:
-    st.write("Aucun spin manuel enregistré.")
-
-# -------------------------------
-# UI compacte : multiplicateurs rapides + manuel
-# -------------------------------
-st.subheader("⚡ Multiplicateurs (Top slot) — boutons rapides")
-preset_mults = [2,5,10,25,50,100]
-cols_mult = st.columns(len(preset_mults))
-for i,m in enumerate(preset_mults):
-    if cols_mult[i].button(f"x{m}", key=f"mult_preset_{m}"):
-        st.session_state.mult_real_default = m
-
-# champ manuel compact
-st.write("Ou choisis une valeur manuelle :")
-mult_input = st.number_input("x (manuel)", min_value=1, max_value=200, value=int(st.session_state.mult_real_default), step=1, key="mult_input_compact")
-st.session_state.mult_real_default = int(mult_input)
-mult_real_for_spin = st.session_state.mult_real_default
-
-# -------------------------------
-# Fonctions probabilités & utilitaires
+# FONCTIONS (définies avant l'utilisation)
 # -------------------------------
 def compute_segment_probabilities(history):
     segment_count = {'1':1,'2':2,'5':2,'10':1,'Cash Hunt':1,'Pachinko':1,'Coin Flip':1,'Crazy Time':1}
     total_segments = sum(segment_count.values())
     base_prob = {k: v/total_segments for k,v in segment_count.items()}
     hist_weight = {k: (history.count(k)/len(history) if history else 0) for k in segment_count.keys()}
+    # mix 50/50 base vs historique
     prob = {k: 0.5*base_prob[k] + 0.5*hist_weight[k] for k in segment_count.keys()}
     return prob
 
@@ -148,7 +86,6 @@ def adjust_unit(bankroll):
     return st.session_state.base_unit
 
 def process_spin_real(spin_result, mises_utilisees, bankroll, mult_real):
-    # mult_real is a uniform top-slot multiplier used for bonus segments
     mult_table = {'1':2,'2':3,'5':6,'10':11,
                   'Cash Hunt':mult_real,
                   'Pachinko':mult_real,
@@ -162,9 +99,6 @@ def process_spin_real(spin_result, mises_utilisees, bankroll, mult_real):
     new_bankroll = float(bankroll) + float(gain_net)
     return float(gain_net), float(mise_total), float(new_bankroll)
 
-# -------------------------------
-# Stratégie intelligente (basée sur prob + historique)
-# -------------------------------
 def choose_strategy_intelligent(history, bankroll):
     # no-bet si bankroll critique
     if float(bankroll) <= float(critical_threshold_value):
@@ -209,10 +143,73 @@ def choose_strategy_intelligent(history, bankroll):
     return best_name, best_mises
 
 # -------------------------------
+# UI compacte : boutons segments (grille 4 colonnes) - mobile friendly
+# -------------------------------
+st.header("Historique Spins (manuel)")
+
+def segment_buttons_grid(segments, cols_per_row=4):
+    rows = (len(segments) + cols_per_row - 1) // cols_per_row
+    idx = 0
+    for r in range(rows):
+        cols = st.columns(cols_per_row)
+        for c in range(cols_per_row):
+            if idx >= len(segments):
+                break
+            seg = segments[idx]
+            if cols[c].button(seg, key=f"segbtn_{seg}_{idx}"):
+                st.session_state.history.append(seg)
+            idx += 1
+
+segment_buttons_grid(segments, cols_per_row=4)
+
+# actions compacts
+act_col1, act_col2 = st.columns([1,1])
+with act_col1:
+    if st.button("↩ Suppr dernier", key="btn_suppr_hist"):
+        if st.session_state.history:
+            st.session_state.history.pop()
+            st.success("Dernier historique supprimé.")
+with act_col2:
+    if st.button("🏁 Fin historique", key="btn_fin_hist"):
+        st.success(f"Historique enregistré ({len(st.session_state.history)} spins). Le bot est prêt à suggérer.")
+        # calculer et stocker la suggestion pour le 1er live spin
+        if st.session_state.history:
+            next_name, next_mises = choose_strategy_intelligent(st.session_state.history, st.session_state.bankroll)
+            st.session_state.last_suggestion_name = next_name
+            st.session_state.last_suggestion_mises = next_mises
+        else:
+            st.warning("Historique vide — aucune suggestion calculée.")
+
+# affichage du tableau historique manuel (sans simulation)
+st.subheader("Tableau Historique Manuel")
+if st.session_state.history:
+    df_manual = pd.DataFrame({
+        "Spin n°": list(range(1, len(st.session_state.history)+1)),
+        "Segment": st.session_state.history
+    })
+    st.dataframe(df_manual, use_container_width=True)
+else:
+    st.write("Aucun spin manuel enregistré.")
+
+# -------------------------------
+# UI compacte : multiplicateurs rapides + manuel
+# -------------------------------
+st.subheader("⚡ Multiplicateurs (Top slot) — boutons rapides")
+preset_mults = [2,5,10,25,50,100]
+cols_mult = st.columns(len(preset_mults))
+for i,m in enumerate(preset_mults):
+    if cols_mult[i].button(f"x{m}", key=f"mult_preset_{m}"):
+        st.session_state.mult_real_default = m
+
+st.write("Ou choisis une valeur manuelle :")
+mult_input = st.number_input("x (manuel)", min_value=1, max_value=200, value=int(st.session_state.mult_real_default), step=1, key="mult_input_compact")
+st.session_state.mult_real_default = int(mult_input)
+mult_real_for_spin = st.session_state.mult_real_default
+
+# -------------------------------
 # Affichage de la suggestion courante (prochaine mise)
 # -------------------------------
 st.subheader("📊 Stratégie suggérée (prochaine mise)")
-# IMPORTANT : n'**écrase** pas last_suggestion_mises ici — on affiche seulement ce qui a été stocké par "Fin historique"
 if st.session_state.last_suggestion_name:
     st.markdown(f"**Stratégie :** {st.session_state.last_suggestion_name}")
     st.markdown("**Mises proposées :**")
@@ -229,19 +226,19 @@ spin_val = st.selectbox("Spin Sorti", segments)
 live_col1, live_col2 = st.columns([1,1])
 with live_col1:
     if st.button("Enregistrer Spin (utilise la suggestion stockée)"):
-        # récupère la suggestion stockée (celle qui a été calculée pour CE spin)
+        # récupérer la suggestion stockée (celle qui a été calculée pour CE spin)
         mises_for_spin = st.session_state.last_suggestion_mises.copy() if st.session_state.last_suggestion_mises else {}
 
-        # s'il n'y a pas de suggestion (cas edge), on calcule une suggestion "on the fly" (mais normalement Fin historique doit l'avoir fait)
+        # si pas de suggestion (edge case), calculer on-the-fly
         if not mises_for_spin:
             tmp_name, mises_for_spin = choose_strategy_intelligent(st.session_state.history, st.session_state.bankroll)
             st.session_state.last_suggestion_name = tmp_name
             st.session_state.last_suggestion_mises = mises_for_spin
 
-        # calcul du résultat du spin en utilisant les mises_for_spin (qui étaient suggérées POUR ce spin)
+        # calculer résultat en utilisant les mises_for_spin (qui étaient suggérées POUR ce spin)
         gain_net, mise_total, new_bankroll = process_spin_real(spin_val, mises_for_spin, st.session_state.bankroll, mult_real_for_spin)
 
-        # enregistrer le résultat (on ajoute le spin APRÈS le calcul)
+        # enregistrer le résultat (ajouter le spin APRÈS le calcul)
         st.session_state.history.append(spin_val)
         st.session_state.live_history.append(spin_val)
         st.session_state.last_gain = float(gain_net)
@@ -257,7 +254,7 @@ with live_col1:
             "Multiplicateur": mult_real_for_spin
         })
 
-        # Après l'ajout du spin, CALCULER et STOCKER la suggestion POUR LE PROCHAIN SPIN
+        # Après l'ajout du spin, calculer et stocker la suggestion pour LE PROCHAIN SPIN
         next_name, next_mises = choose_strategy_intelligent(st.session_state.history, st.session_state.bankroll)
         st.session_state.last_suggestion_name = next_name
         st.session_state.last_suggestion_mises = next_mises
