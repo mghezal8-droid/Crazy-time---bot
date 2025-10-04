@@ -97,19 +97,16 @@ def process_spin_real(spin_result, mises_utilisees, bankroll, mult_manual=None):
     return float(gain_net), float(gain_brut), float(mise_total), float(new_bankroll), mult_applique
 
 def choose_strategy_intelligent(history, bankroll):
+    """Retourne UNE seule stratégie à appliquer (Martingale 1 si perte, sinon God Mode + Bonus)"""
     if float(bankroll) <= float(critical_threshold_value):
         return "No-Bet", {k:0.0 for k in segments}
 
     unit = adjust_unit(bankroll)
     scale = unit / st.session_state.base_unit if st.session_state.base_unit > 0 else 1.0
-    probs = compute_segment_probabilities(history)
 
+    # Base des stratégies
     strategies = {}
-    # Martingale 1 uniquement
-    martingale_1_unit = unit * (2 ** st.session_state.martingale_1_loss_streak)
-    strategies["Martingale_1"] = {k:(martingale_1_unit if k=='1' else 0.0) for k in segments}
-
-    # Autres stratégies classiques
+    # God Mode et variantes
     strategies["God Mode"] = {'1':0.0,'2':round(3*scale,2),'5':round(2*scale,2),'10':round(1*scale,2),
                               'Cash Hunt':0.0,'Pachinko':0.0,'Coin Flip':0.0,'Crazy Time':0.0}
     strategies["God Mode + Bonus"] = {'1':0.0,'2':round(3*scale,2),'5':round(2*scale,2),'10':round(1*scale,2),
@@ -119,13 +116,18 @@ def choose_strategy_intelligent(history, bankroll):
                                'Cash Hunt':round(1*scale,2),'Pachinko':round(1*scale,2),
                                'Coin Flip':round(1*scale,2),'Crazy Time':round(1*scale,2)}
 
-    # Choisir la stratégie avec la probabilité la plus haute pour les segments misés
-    max_prob = max([probs.get(seg,0) for seg in segments])
-    candidates = [name for name,strat in strategies.items() if any(strat.get(seg,0)>0 and probs.get(seg,0)==max_prob for seg in segments)]
-    if not candidates:
-        candidates = list(strategies.keys())
+    # Martingale 1 : 1$ de base, double après perte
+    if st.session_state.martingale_1_loss_streak > 0:
+        martingale_1_value = st.session_state.base_unit * (2 ** st.session_state.martingale_1_loss_streak)
+    else:
+        martingale_1_value = st.session_state.base_unit
+    strategies["Martingale_1"] = {k:(martingale_1_value if k=='1' else 0.0) for k in segments}
 
-    best_name = random.choice(candidates)
+    # Appliquer UNE seule stratégie selon Martingale 1
+    if st.session_state.martingale_1_loss_streak > 0:
+        best_name = "Martingale_1"
+    else:
+        best_name = "God Mode + Bonus"
     best_mises = strategies[best_name]
 
     return best_name, best_mises
@@ -194,7 +196,6 @@ def display_next_suggestion():
         st.write({k: round(v,2) for k,v in st.session_state.last_suggestion_mises.items()})
     else:
         st.write("Pas encore de suggestion. Appuie sur 'Fin historique' ou enregistre un spin live.")
-
 display_next_suggestion()
 
 # -------------------------------
@@ -206,17 +207,7 @@ live_col1, live_col2 = st.columns([1,1])
 
 with live_col1:
     if st.button("Enregistrer Spin"):
-        # Prendre la dernière suggestion
-        if st.session_state.last_suggestion_mises:
-            mises_for_spin = st.session_state.last_suggestion_mises.copy()
-        else:
-            next_name, mises_for_spin = choose_strategy_intelligent(
-                st.session_state.history, st.session_state.bankroll
-            )
-            st.session_state.last_suggestion_name = next_name
-            st.session_state.last_suggestion_mises = mises_for_spin
-
-        # Appliquer le spin
+        mises_for_spin = st.session_state.last_suggestion_mises.copy() if st.session_state.last_suggestion_mises else {}
         gain_net, gain_brut, mise_total, new_bankroll, mult_applique = process_spin_real(
             spin_val,
             mises_for_spin,
@@ -224,7 +215,6 @@ with live_col1:
             st.session_state.mult_real_manual
         )
 
-        # Historique
         st.session_state.history.append(spin_val)
         st.session_state.live_history.append(spin_val)
         st.session_state.last_gain = float(gain_net)
@@ -241,24 +231,19 @@ with live_col1:
             "Bankroll": round(new_bankroll,2)
         })
 
-        # Mettre à jour Martingale 1
+        # Mettre à jour la Martingale 1 : double si perte, reset si gain
         if spin_val == '1' and gain_net > 0:
             st.session_state.martingale_1_loss_streak = 0
-        elif spin_val == '1':
+        else:
             st.session_state.martingale_1_loss_streak += 1
 
-        # Recalculer prochaine stratégie suggérée (une seule)
-        next_name, next_mises = choose_strategy_intelligent(
-            st.session_state.history, st.session_state.bankroll
-        )
+        # Recalculer prochaine suggestion
+        next_name, next_mises = choose_strategy_intelligent(st.session_state.history, st.session_state.bankroll)
         st.session_state.last_suggestion_name = next_name
         st.session_state.last_suggestion_mises = next_mises
-
         display_next_suggestion()
-        st.success(
-            f"Spin enregistré : {spin_val} x{mult_applique} — "
-            f"Gain net: {round(gain_net,2)} — Bankroll: {round(new_bankroll,2)}"
-        )
+
+        st.success(f"Spin enregistré : {spin_val} x{mult_applique} — Gain net: {round(gain_net,2)} — Bankroll: {round(new_bankroll,2)}")
 
 with live_col2:
     if st.button("Supprimer dernier live spin"):
@@ -268,18 +253,15 @@ with live_col2:
             st.session_state.results_table.pop()
         if st.session_state.history:
             st.session_state.history.pop()
+        # Ajuster Martingale 1 loss streak si nécessaire
         if st.session_state.martingale_1_loss_streak > 0:
             st.session_state.martingale_1_loss_streak -= 1
 
         st.warning("Dernier live spin supprimé.")
-
-        # Recalculer une seule suggestion
-        next_name, next_mises = choose_strategy_intelligent(
-            st.session_state.history, st.session_state.bankroll
-        )
+        # Recalculer suggestion
+        next_name, next_mises = choose_strategy_intelligent(st.session_state.history, st.session_state.bankroll)
         st.session_state.last_suggestion_name = next_name
         st.session_state.last_suggestion_mises = next_mises
-
         display_next_suggestion()
 
 # -------------------------------
