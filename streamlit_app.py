@@ -26,6 +26,8 @@ if 'last_suggestion_name' not in st.session_state:
     st.session_state.last_suggestion_name = None
 if 'last_suggestion_mises' not in st.session_state:
     st.session_state.last_suggestion_mises = {}
+if 'mult_real_default' not in st.session_state:
+    st.session_state.mult_real_default = 10
 
 # -------------------------------
 # Segments
@@ -51,10 +53,6 @@ base_unit_input = st.sidebar.number_input(
 if base_unit_input != st.session_state.base_unit:
     st.session_state.base_unit = float(base_unit_input)
 
-# valeur par défaut pour preset multiplicateurs rapides
-if 'mult_real_default' not in st.session_state:
-    st.session_state.mult_real_default = 10
-
 bonus_multiplier_assumption = st.sidebar.number_input(
     "Hypothèse multiplicateur bonus (pour estimation/test)", min_value=1, max_value=200,
     value=10, step=1
@@ -67,14 +65,13 @@ critical_threshold_pct = st.sidebar.slider(
 critical_threshold_value = float(st.session_state.initial_bankroll) * (critical_threshold_pct/100)
 
 # -------------------------------
-# FONCTIONS (définies avant l'utilisation)
+# FONCTIONS
 # -------------------------------
 def compute_segment_probabilities(history):
     segment_count = {'1':1,'2':2,'5':2,'10':1,'Cash Hunt':1,'Pachinko':1,'Coin Flip':1,'Crazy Time':1}
     total_segments = sum(segment_count.values())
     base_prob = {k: v/total_segments for k,v in segment_count.items()}
     hist_weight = {k: (history.count(k)/len(history) if history else 0) for k in segment_count.keys()}
-    # mix 50/50 base vs historique
     prob = {k: 0.5*base_prob[k] + 0.5*hist_weight[k] for k in segment_count.keys()}
     return prob
 
@@ -100,7 +97,6 @@ def process_spin_real(spin_result, mises_utilisees, bankroll, mult_real):
     return float(gain_net), float(mise_total), float(new_bankroll)
 
 def choose_strategy_intelligent(history, bankroll):
-    # no-bet si bankroll critique
     if float(bankroll) <= float(critical_threshold_value):
         return "No-Bet", {k:0.0 for k in segments}
 
@@ -109,7 +105,6 @@ def choose_strategy_intelligent(history, bankroll):
     probs = compute_segment_probabilities(history)
 
     strategies = {}
-    # martingale sur le segment le plus probable
     sorted_probs = sorted(probs.items(), key=lambda x: x[1], reverse=True)
     target_segment = sorted_probs[0][0]
     strategies[f"Martingale_{target_segment}"] = {k:(unit if k==target_segment else 0.0) for k in segments}
@@ -123,27 +118,24 @@ def choose_strategy_intelligent(history, bankroll):
                                'Cash Hunt':round(1*scale,2),'Pachinko':round(1*scale,2),
                                'Coin Flip':round(1*scale,2),'Crazy Time':round(1*scale,2)}
 
-    # si aucun bonus dans les 15 derniers spins => favoriser stratégies avec bonus
     recent_history = history[-15:] if len(history) >= 15 else history
     if not any(seg in recent_history for seg in ["Cash Hunt","Pachinko","Coin Flip","Crazy Time"]):
         bonus_strats = {name:strat for name,strat in strategies.items() if "Bonus" in name}
         if bonus_strats:
             strategies = bonus_strats
 
-    # choisir candidats : ceux qui misent sur le segment le plus probable (si possible), sinon toutes
     max_prob = max([probs.get(seg,0) for seg in segments])
     candidates = [name for name,strat in strategies.items() if any(strat.get(seg,0)>0 and probs.get(seg,0)==max_prob for seg in segments)]
     if not candidates:
         candidates = list(strategies.keys())
 
-    # choix aléatoire contrôlé parmi candidats (variation)
     best_name = random.choice(candidates)
     best_mises = strategies[best_name]
 
     return best_name, best_mises
 
 # -------------------------------
-# UI compacte : boutons segments (grille 4 colonnes) - mobile friendly
+# UI compacte : boutons segments
 # -------------------------------
 st.header("Historique Spins (manuel)")
 
@@ -173,14 +165,11 @@ with act_col2:
     if st.button("🏁 Fin historique", key="btn_fin_hist"):
         st.success(f"Historique enregistré ({len(st.session_state.history)} spins). Le bot est prêt à suggérer.")
         # calculer et stocker la suggestion pour le 1er live spin
-        if st.session_state.history:
-            next_name, next_mises = choose_strategy_intelligent(st.session_state.history, st.session_state.bankroll)
-            st.session_state.last_suggestion_name = next_name
-            st.session_state.last_suggestion_mises = next_mises
-        else:
-            st.warning("Historique vide — aucune suggestion calculée.")
+        next_name, next_mises = choose_strategy_intelligent(st.session_state.history, st.session_state.bankroll)
+        st.session_state.last_suggestion_name = next_name
+        st.session_state.last_suggestion_mises = next_mises
 
-# affichage du tableau historique manuel (sans simulation)
+# affichage du tableau historique manuel
 st.subheader("Tableau Historique Manuel")
 if st.session_state.history:
     df_manual = pd.DataFrame({
@@ -192,7 +181,7 @@ else:
     st.write("Aucun spin manuel enregistré.")
 
 # -------------------------------
-# UI compacte : multiplicateurs rapides + manuel
+# Multiplicateurs rapides + manuel
 # -------------------------------
 st.subheader("⚡ Multiplicateurs (Top slot) — boutons rapides")
 preset_mults = [2,5,10,25,50,100]
@@ -207,7 +196,7 @@ st.session_state.mult_real_default = int(mult_input)
 mult_real_for_spin = st.session_state.mult_real_default
 
 # -------------------------------
-# Affichage de la suggestion courante (prochaine mise)
+# Affichage suggestion courante
 # -------------------------------
 st.subheader("📊 Stratégie suggérée (prochaine mise)")
 if st.session_state.last_suggestion_name:
@@ -226,19 +215,13 @@ spin_val = st.selectbox("Spin Sorti", segments)
 live_col1, live_col2 = st.columns([1,1])
 with live_col1:
     if st.button("Enregistrer Spin (utilise la suggestion stockée)"):
-        # récupérer la suggestion stockée (celle qui a été calculée pour CE spin)
         mises_for_spin = st.session_state.last_suggestion_mises.copy() if st.session_state.last_suggestion_mises else {}
-
-        # si pas de suggestion (edge case), calculer on-the-fly
         if not mises_for_spin:
             tmp_name, mises_for_spin = choose_strategy_intelligent(st.session_state.history, st.session_state.bankroll)
             st.session_state.last_suggestion_name = tmp_name
             st.session_state.last_suggestion_mises = mises_for_spin
 
-        # calculer résultat en utilisant les mises_for_spin (qui étaient suggérées POUR ce spin)
         gain_net, mise_total, new_bankroll = process_spin_real(spin_val, mises_for_spin, st.session_state.bankroll, mult_real_for_spin)
-
-        # enregistrer le résultat (ajouter le spin APRÈS le calcul)
         st.session_state.history.append(spin_val)
         st.session_state.live_history.append(spin_val)
         st.session_state.last_gain = float(gain_net)
@@ -254,7 +237,7 @@ with live_col1:
             "Multiplicateur": mult_real_for_spin
         })
 
-        # Après l'ajout du spin, calculer et stocker la suggestion pour LE PROCHAIN SPIN
+        # calculer et stocker la suggestion pour LE PROCHAIN SPIN
         next_name, next_mises = choose_strategy_intelligent(st.session_state.history, st.session_state.bankroll)
         st.session_state.last_suggestion_name = next_name
         st.session_state.last_suggestion_mises = next_mises
@@ -263,7 +246,6 @@ with live_col1:
 
 with live_col2:
     if st.button("Supprimer dernier live spin"):
-        # suppression sécurisée
         if st.session_state.live_history:
             st.session_state.live_history.pop()
         if st.session_state.results_table:
@@ -271,7 +253,6 @@ with live_col2:
         if st.session_state.history:
             st.session_state.history.pop()
         st.warning("Dernier live spin supprimé.")
-        # recalcule suggestion après suppression
         next_name, next_mises = choose_strategy_intelligent(st.session_state.history, st.session_state.bankroll)
         st.session_state.last_suggestion_name = next_name
         st.session_state.last_suggestion_mises = next_mises
@@ -297,7 +278,7 @@ else:
     st.write("Aucun spin live enregistré.")
 
 # -------------------------------
-# Tester une stratégie manuellement (compact)
+# Tester une stratégie manuellement
 # -------------------------------
 st.subheader("⚡ Tester une stratégie manuellement")
 strategy_choice = st.selectbox(
@@ -312,7 +293,6 @@ if st.button("Tester Stratégie (simulate)"):
     history_test = st.session_state.history.copy()
 
     for i, spin in enumerate(history_test, start=1):
-        # Construire les mises selon la stratégie
         if strategy_choice == "No-Bet":
             mises = {k:0.0 for k in segments}
         elif "Martingale" in strategy_choice:
@@ -348,8 +328,6 @@ if st.button("Tester Stratégie (simulate)"):
     df_test = pd.DataFrame(test_results)
     st.dataframe(df_test, use_container_width=True)
 
-    # Graphique bankroll
-    st.subheader("📊 Évolution bankroll (test stratégie)")
     fig, ax = plt.subplots()
     ax.plot(df_test["Spin #"], df_test["Bankroll"], marker='o', label='Bankroll (test)')
     ax.axhline(y=st.session_state.initial_bankroll, color='gray', linestyle='--', label='Bankroll initiale')
