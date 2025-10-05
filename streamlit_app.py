@@ -15,11 +15,13 @@ VAL_SEG = {'1': 1, '2': 2, '5': 5, '10': 10}
 # ⚙️ INIT DES VARIABLES
 # -----------------------------------
 if "bankroll" not in st.session_state:
-    st.session_state.bankroll = 100.0
+    st.session_state.bankroll = 150.0
 if "initial_bankroll" not in st.session_state:
-    st.session_state.initial_bankroll = 100.0
+    st.session_state.initial_bankroll = 150.0
 if "live_history" not in st.session_state:
     st.session_state.live_history = []
+if "history" not in st.session_state:
+    st.session_state.history = []  # historique manuel avant live
 if "results_table" not in st.session_state:
     st.session_state.results_table = []
 if "martingale_1_loss_streak" not in st.session_state:
@@ -41,10 +43,14 @@ def strategy_god_mode(bankroll):
     return "God Mode", {'2': 3.0, '5': 2.0, '10': 1.0}
 
 def strategy_god_mode_bonus(bankroll):
-    return "God Mode + Bonus", {'2': 3.0, '5': 2.0, '10': 1.0, 'Coin Flip': 1.0, 'Cash Hunt': 1.0, 'Pachinko': 1.0, 'Crazy Time': 1.0}
+    return "God Mode + Bonus", {'2': 3.0, '5': 2.0, '10': 1.0,
+                                'Coin Flip': 1.0, 'Cash Hunt': 1.0,
+                                'Pachinko': 1.0, 'Crazy Time': 1.0}
 
 def strategy_1_bonus(bankroll):
-    return "1 + Bonus", {'1': 4.0, 'Coin Flip': 1.0, 'Cash Hunt': 1.0, 'Pachinko': 1.0, 'Crazy Time': 1.0}
+    return "1 + Bonus", {'1': 4.0, 'Coin Flip': 1.0,
+                         'Cash Hunt': 1.0, 'Pachinko': 1.0,
+                         'Crazy Time': 1.0}
 
 STRATEGIES = [strategy_martingale_1, strategy_god_mode, strategy_god_mode_bonus, strategy_1_bonus]
 
@@ -60,16 +66,16 @@ def choose_strategy_intelligent(history, bankroll):
         return random.choice([strategy_god_mode, strategy_god_mode_bonus, strategy_1_bonus])(bankroll)
 
 # -----------------------------------
-# 💰 CALCUL DU GAIN
+# 💰 CALCUL DU GAIN (formule exacte)
 # -----------------------------------
 def calcul_gain(mises, spin_result, multiplicateur):
     gain_brut = 0
     for segment, mise in mises.items():
         if segment == spin_result:
             if segment in VAL_SEG:
-                gain_brut += mise * VAL_SEG[segment] * multiplicateur
+                gain_brut += mise * (VAL_SEG[segment] * multiplicateur) + mise
             else:
-                gain_brut += mise * multiplicateur
+                gain_brut += mise * multiplicateur + mise
     mise_totale = sum(mises.values())
     gain_net = gain_brut - mise_totale
     return gain_brut, gain_net
@@ -83,7 +89,45 @@ def display_next_suggestion():
     st.table(pd.DataFrame.from_dict(st.session_state.last_suggestion_mises, orient='index', columns=['Mise $']))
 
 # -----------------------------------
-# 🧮 ENTRÉES UTILISATEUR
+# 📝 HISTORIQUE MANUEL AVANT SPINS LIVE
+# -----------------------------------
+st.header("📝 Historique Manuel (avant spins live)")
+def segment_buttons_grid(segments, cols_per_row=4):
+    rows = (len(segments)+cols_per_row-1)//cols_per_row
+    idx = 0
+    for r in range(rows):
+        cols = st.columns(cols_per_row)
+        for c in range(cols_per_row):
+            if idx >= len(segments): break
+            seg = segments[idx]
+            if cols[c].button(seg, key=f"hist_{seg}_{idx}"):
+                st.session_state.history.append(seg)
+            idx += 1
+segment_buttons_grid(['1','2','5','10','Coin Flip','Cash Hunt','Pachinko','Crazy Time'])
+
+col_a, col_b = st.columns(2)
+with col_a:
+    if st.button("↩ Supprimer dernier spin historique"):
+        if st.session_state.history:
+            st.session_state.history.pop()
+            st.success("Dernier spin historique supprimé.")
+with col_b:
+    if st.button("🏁 Terminer historique"):
+        st.success(f"Historique terminé ({len(st.session_state.history)} spins).")
+        # calcul de la première suggestion
+        next_name, next_mises = choose_strategy_intelligent(st.session_state.history, st.session_state.bankroll)
+        st.session_state.last_suggestion_name = next_name
+        st.session_state.last_suggestion_mises = next_mises
+
+# Affichage de l'historique
+if st.session_state.history:
+    st.subheader("📋 Historique manuel actuel")
+    df_manual = pd.DataFrame({"#": range(1,len(st.session_state.history)+1),
+                              "Résultat": st.session_state.history})
+    st.dataframe(df_manual,use_container_width=True)
+
+# -----------------------------------
+# 🧮 ENTRÉES UTILISATEUR - SPINS LIVE
 # -----------------------------------
 st.title("🎡 Crazy Time Live Tracker")
 
