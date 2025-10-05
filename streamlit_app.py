@@ -10,11 +10,11 @@ st.set_page_config(layout="wide")
 # Init session_state
 # -------------------------------
 if 'history' not in st.session_state:
-    st.session_state.history = []               
+    st.session_state.history = []
 if 'live_history' not in st.session_state:
-    st.session_state.live_history = []          
+    st.session_state.live_history = []
 if 'results_table' not in st.session_state:
-    st.session_state.results_table = []         
+    st.session_state.results_table = []
 if 'bankroll' not in st.session_state:
     st.session_state.bankroll = 150.0
 if 'initial_bankroll' not in st.session_state:
@@ -76,6 +76,7 @@ def adjust_unit(bankroll):
     return st.session_state.base_unit
 
 def martingale_1_mise(base_unit):
+    """Retourne la mise actuelle pour '1' selon la Martingale classique."""
     streak = st.session_state.martingale_1_loss_streak
     cap = 10
     n = min(streak, cap)
@@ -83,19 +84,20 @@ def martingale_1_mise(base_unit):
 
 def process_spin_real(spin_result, mises_utilisees, bankroll, mult_manual):
     """
-    Calcule gain brut/net en appliquant le multiplicateur manuel sur le spin.
+    Calcule gain brut/net en appliquant le multiplicateur manuel sur le segment sorti.
+    Gain brut = mise_sur_segment * multiplicateur_total + mise_sur_segment
+    Gain net = gain_brut - mise_totale
     """
     mise_total = sum(mises_utilisees.values())
     gain_brut = 0.0
     mult_applique = 1
 
     if spin_result in mises_utilisees and mises_utilisees.get(spin_result, 0) > 0:
-        # gain brut = mise sur le segment * multiplicateur manuel
+        # multiplicateur total = multiplicateur manuel
         mult_applique = mult_manual
-        gain_brut = mises_utilisees[spin_result] * mult_applique
+        gain_brut = mises_utilisees[spin_result] * mult_applique + mises_utilisees[spin_result]
 
-    # gain net = gain brut - mises perdantes
-    gain_net = gain_brut - (mise_total - mises_utilisees.get(spin_result,0))
+    gain_net = gain_brut - mise_total
     new_bankroll = bankroll + gain_net
 
     return float(gain_net), float(gain_brut), float(mise_total), float(new_bankroll), int(mult_applique)
@@ -218,12 +220,15 @@ with col_save:
             spin_val, mises_for_spin, st.session_state.bankroll, st.session_state.mult_real_manual
         )
 
-        # Martingale 1 streak
-        if mises_for_spin.get('1',0.0)>0:
+        # Martingale 1: double après perte, reset après gain
+        if st.session_state.last_suggestion_name=="Martingale_1":
             if spin_val=='1' and gain_net>0:
                 st.session_state.martingale_1_loss_streak=0
             else:
                 st.session_state.martingale_1_loss_streak+=1
+        else:
+            # si autre stratégie, on ne touche pas à la streak, mais après gain on revient à sélection intelligente
+            st.session_state.martingale_1_loss_streak = st.session_state.martingale_1_loss_streak
 
         st.session_state.history.append(spin_val)
         st.session_state.live_history.append(spin_val)
@@ -242,7 +247,8 @@ with col_save:
             "Bankroll": round(new_bankroll,2)
         })
 
-        next_name,next_mises = choose_strategy_intelligent(st.session_state.history, st.session_state.bankroll)
+        # recalcule la stratégie pour le prochain spin
+        next_name, next_mises = choose_strategy_intelligent(st.session_state.history, st.session_state.bankroll)
         st.session_state.last_suggestion_name = next_name
         st.session_state.last_suggestion_mises = next_mises
 
