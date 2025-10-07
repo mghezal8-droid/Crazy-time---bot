@@ -60,22 +60,18 @@ STRATEGIES = [strategy_martingale_1, strategy_god_mode, strategy_god_mode_bonus,
 # -----------------------------------
 # 🧠 CHOIX INTELLIGENT + MARTINGALE AUTO
 # -----------------------------------
-def choose_strategy_intelligent(history, bankroll):
+def choose_strategy_intelligent(full_history, bankroll):
     """
-    - Si perte Martingale <2 → continuer la stratégie précédente
-    - Si 2 pertes consécutives → lancer Martingale sur 1
+    - Si 3 pertes consécutives → activer Martingale sur 1
     - Si Martingale gagne → reset et retour au mode intelligent
+    - Sinon → sélection aléatoire parmi les stratégies intelligentes
     """
     # Si Martingale active → continuer Martingale
-    if st.session_state.martingale_1_loss_streak >= 2:
-        return strategy_martingale_1(bankroll, st.session_state.martingale_1_loss_streak - 2)
+    if st.session_state.martingale_1_loss_streak >= 3:
+        return strategy_martingale_1(bankroll, st.session_state.martingale_1_loss_streak - 3)
 
-    # Si Martingale déjà en cours
-    if st.session_state.martingale_1_loss_streak > 0:
-        return strategy_martingale_1(bankroll, st.session_state.martingale_1_loss_streak)
-
-    # Sinon stratégie intelligente normale
-    if not history:
+    # Sinon stratégie intelligente
+    if not full_history:
         return strategy_1_bonus(bankroll)
     return random.choice([strategy_god_mode, strategy_god_mode_bonus, strategy_1_bonus])(bankroll)
 
@@ -87,9 +83,9 @@ def calcul_gain(mises, spin_result, multiplicateur):
     for segment, mise in mises.items():
         if segment == spin_result:
             if segment in VAL_SEG:
-                gain_brut += mise * (VAL_SEG[segment] * multiplicateur) + mise
+                gain_brut += (mise * (VAL_SEG[segment] * multiplicateur)) + mise
             else:
-                gain_brut += mise * multiplicateur + mise
+                gain_brut += (mise * multiplicateur) + mise
     mise_totale = sum(mises.values())
     gain_net = gain_brut - mise_totale
     return gain_brut, gain_net
@@ -99,8 +95,11 @@ def calcul_gain(mises, spin_result, multiplicateur):
 # -----------------------------------
 def display_next_suggestion():
     st.subheader("🎯 Prochaine stratégie suggérée")
-    st.write(f"**Stratégie :** {st.session_state.last_suggestion_name}")
-    st.table(pd.DataFrame.from_dict(st.session_state.last_suggestion_mises, orient='index', columns=['Mise $']))
+    if st.session_state.last_suggestion_name and st.session_state.last_suggestion_mises:
+        st.write(f"**Stratégie :** {st.session_state.last_suggestion_name}")
+        st.table(pd.DataFrame.from_dict(st.session_state.last_suggestion_mises, orient='index', columns=['Mise $']))
+    else:
+        st.write("Aucune stratégie suggérée pour l’instant.")
 
 # -----------------------------------
 # 📝 HISTORIQUE MANUEL
@@ -128,10 +127,12 @@ with col_a:
             st.success("Dernier spin historique supprimé.")
 with col_b:
     if st.button("🏁 Terminer historique"):
-        st.success(f"Historique terminé ({len(st.session_state.history)} spins).")
-        next_name, next_mises = choose_strategy_intelligent(st.session_state.history, st.session_state.bankroll)
+        full_history = st.session_state.history + st.session_state.live_history
+        next_name, next_mises = choose_strategy_intelligent(full_history, st.session_state.bankroll)
         st.session_state.last_suggestion_name = next_name
         st.session_state.last_suggestion_mises = next_mises
+        st.success(f"Historique terminé ({len(st.session_state.history)} spins). Stratégie suivante : {next_name}")
+        display_next_suggestion()
 
 if st.session_state.history:
     st.subheader("📋 Historique manuel actuel")
@@ -173,27 +174,21 @@ with col2:
             "Bankroll": round(new_bankroll,2)
         })
 
-        # -------------------------------
-        # 🔁 LOGIQUE MARTINGALE AUTOMATIQUE
-        # -------------------------------
+        # 🔁 MARTINGALE AUTO
         if gain_net <= 0:
             st.session_state.martingale_1_loss_streak += 1
         else:
-            if strategy_name == "Martingale 1":
-                # Gain Martingale → reset complet
-                st.session_state.martingale_1_loss_streak = 0
-            else:
-                st.session_state.martingale_1_loss_streak = 0
+            st.session_state.martingale_1_loss_streak = 0
 
-        # Si 2 pertes → activer Martingale
-        if st.session_state.martingale_1_loss_streak >= 2:
-            next_name, next_mises = strategy_martingale_1(new_bankroll, st.session_state.martingale_1_loss_streak - 2)
+        # Si 3 pertes → activer Martingale
+        full_history = st.session_state.history + st.session_state.live_history
+        if st.session_state.martingale_1_loss_streak >= 3:
+            next_name, next_mises = strategy_martingale_1(new_bankroll, st.session_state.martingale_1_loss_streak - 3)
         else:
-            next_name, next_mises = choose_strategy_intelligent(st.session_state.live_history, new_bankroll)
+            next_name, next_mises = choose_strategy_intelligent(full_history, new_bankroll)
 
         st.session_state.last_suggestion_name = next_name
         st.session_state.last_suggestion_mises = next_mises
-
         display_next_suggestion()
 
         st.success(f"Spin enregistré : {spin_val} x{multiplicateur} — Gain net: {round(gain_net,2)} — Bankroll: {round(new_bankroll,2)}")
@@ -209,7 +204,8 @@ if st.button("🗑️ Supprimer dernier spin"):
         if st.session_state.martingale_1_loss_streak > 0:
             st.session_state.martingale_1_loss_streak -= 1
         st.warning("Dernier spin supprimé.")
-        next_name, next_mises = choose_strategy_intelligent(st.session_state.live_history, st.session_state.bankroll)
+        full_history = st.session_state.history + st.session_state.live_history
+        next_name, next_mises = choose_strategy_intelligent(full_history, st.session_state.bankroll)
         st.session_state.last_suggestion_name = next_name
         st.session_state.last_suggestion_mises = next_mises
         display_next_suggestion()
