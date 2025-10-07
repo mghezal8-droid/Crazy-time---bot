@@ -7,7 +7,6 @@ import random
 # 🔧 CONFIG INITIALE
 # -----------------------------------
 st.set_page_config(page_title="🎰 Crazy Time Tracker", layout="wide")
-
 VAL_SEG = {'1': 1, '2': 2, '5': 5, '10': 10}
 
 # -----------------------------------
@@ -29,21 +28,23 @@ if "last_suggestion_name" not in st.session_state:
     st.session_state.last_suggestion_name = None
 if "last_suggestion_mises" not in st.session_state:
     st.session_state.last_suggestion_mises = {}
+if "no_bets_mode" not in st.session_state:
+    st.session_state.no_bets_mode = False  # 🚫 Mode sans mise actif ou non
 
 # -----------------------------------
 # 🎯 STRATÉGIES
 # -----------------------------------
 def strategy_martingale_1(bankroll, loss_streak):
-    base_bet = 4.0
+    base_bet = 2.0
     mise_1 = base_bet * (2 ** loss_streak)
     return "Martingale 1", {'1': mise_1}
 
 def strategy_god_mode(bankroll):
-    return "God Mode", {'2': 3.0, '5': 2.0, '10': 1.0}
+    return "God Mode", {'2': 2.0, '5': 1.0, '10': 1.0}
 
 def strategy_god_mode_bonus(bankroll):
     return "God Mode + Bonus", {
-        '2': 3.0, '5': 2.0, '10': 1.0,
+        '2': 2.0, '5': 1.50, '10': 1.0,
         'Coin Flip': 1.0, 'Cash Hunt': 1.0,
         'Pachinko': 1.0, 'Crazy Time': 1.0
     }
@@ -55,22 +56,34 @@ def strategy_1_bonus(bankroll):
         'Pachinko': 1.0, 'Crazy Time': 1.0
     }
 
-STRATEGIES = [strategy_martingale_1, strategy_god_mode, strategy_god_mode_bonus, strategy_1_bonus]
+def strategy_no_bets():
+    return "No Bets", {}  # 🚫 aucune mise
 
 # -----------------------------------
-# 🧠 CHOIX INTELLIGENT + MARTINGALE AUTO
+# 🧠 CHOIX INTELLIGENT + ANALYSE TENDANCE
 # -----------------------------------
+def trend_is_bad(history):
+    """Analyse très simple : si 70 % ou + des 10 derniers spins sont des '1', tendance défavorable"""
+    if len(history) < 10:
+        return False
+    last_10 = history[-10:]
+    count_1 = last_10.count('1')
+    return count_1 >= 7
+
 def choose_strategy_intelligent(full_history, bankroll):
-    """
-    - Si 3 pertes consécutives → activer Martingale sur 1
-    - Si Martingale gagne → reset et retour au mode intelligent
-    - Sinon → sélection aléatoire parmi les stratégies intelligentes
-    """
-    # Si Martingale active → continuer Martingale
-    if st.session_state.martingale_1_loss_streak >= 3:
-        return strategy_martingale_1(bankroll, st.session_state.martingale_1_loss_streak - 3)
+    # 1️⃣ Si 2 pertes consécutives → Martingale
+    if st.session_state.martingale_1_loss_streak >= 2:
+        return strategy_martingale_1(bankroll, st.session_state.martingale_1_loss_streak - 2)
 
-    # Sinon stratégie intelligente
+    # 2️⃣ Si tendance défavorable → mode No Bets
+    if trend_is_bad(full_history):
+        st.session_state.no_bets_mode = True
+        return strategy_no_bets()
+
+    # 3️⃣ Si on sort du mode No Bets → réactivation du mode intelligent
+    st.session_state.no_bets_mode = False
+
+    # 4️⃣ Sinon choix aléatoire intelligent
     if not full_history:
         return strategy_1_bonus(bankroll)
     return random.choice([strategy_god_mode, strategy_god_mode_bonus, strategy_1_bonus])(bankroll)
@@ -95,9 +108,12 @@ def calcul_gain(mises, spin_result, multiplicateur):
 # -----------------------------------
 def display_next_suggestion():
     st.subheader("🎯 Prochaine stratégie suggérée")
-    if st.session_state.last_suggestion_name and st.session_state.last_suggestion_mises:
+    if st.session_state.last_suggestion_name and st.session_state.last_suggestion_mises is not None:
         st.write(f"**Stratégie :** {st.session_state.last_suggestion_name}")
-        st.table(pd.DataFrame.from_dict(st.session_state.last_suggestion_mises, orient='index', columns=['Mise $']))
+        if st.session_state.last_suggestion_mises:
+            st.table(pd.DataFrame.from_dict(st.session_state.last_suggestion_mises, orient='index', columns=['Mise $']))
+        else:
+            st.info("🚫 Aucune mise pour ce spin (mode No Bets actif)")
     else:
         st.write("Aucune stratégie suggérée pour l’instant.")
 
@@ -153,15 +169,15 @@ with col1:
 with col2:
     if st.button("🎰 Enregistrer le spin live"):
         strategy_name = st.session_state.last_suggestion_name
-        mises_for_spin = st.session_state.last_suggestion_mises
+        mises_for_spin = st.session_state.last_suggestion_mises or {}
 
         gain_brut, gain_net = calcul_gain(mises_for_spin, spin_val, multiplicateur)
         mise_total = sum(mises_for_spin.values())
         new_bankroll = st.session_state.bankroll + gain_net
 
+        # 🔹 Enregistrer le spin, même en mode No Bets
         st.session_state.bankroll = new_bankroll
         st.session_state.live_history.append(spin_val)
-
         st.session_state.results_table.append({
             "Spin #": len(st.session_state.results_table) + 1,
             "Stratégie": strategy_name,
@@ -174,19 +190,15 @@ with col2:
             "Bankroll": round(new_bankroll,2)
         })
 
-        # 🔁 MARTINGALE AUTO
+        # 🔁 Gestion Martingale
         if gain_net <= 0:
             st.session_state.martingale_1_loss_streak += 1
         else:
             st.session_state.martingale_1_loss_streak = 0
 
-        # Si 3 pertes → activer Martingale
+        # 🔄 Déterminer prochaine stratégie
         full_history = st.session_state.history + st.session_state.live_history
-        if st.session_state.martingale_1_loss_streak >= 3:
-            next_name, next_mises = strategy_martingale_1(new_bankroll, st.session_state.martingale_1_loss_streak - 3)
-        else:
-            next_name, next_mises = choose_strategy_intelligent(full_history, new_bankroll)
-
+        next_name, next_mises = choose_strategy_intelligent(full_history, new_bankroll)
         st.session_state.last_suggestion_name = next_name
         st.session_state.last_suggestion_mises = next_mises
         display_next_suggestion()
