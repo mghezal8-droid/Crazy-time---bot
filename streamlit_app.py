@@ -40,6 +40,9 @@ if "last_suggestion_mises" not in st.session_state:
     st.session_state.last_suggestion_mises = {}
 if "bonus_multiplier_assumption" not in st.session_state:
     st.session_state.bonus_multiplier_assumption = 10
+# ✅ Initialisation du multiplicateur EV pour éviter KeyError
+if "mult_for_ev" not in st.session_state:
+    st.session_state["mult_for_ev"] = 1
 
 SEGMENTS = ['1','2','5','10','Coin Flip','Cash Hunt','Pachinko','Crazy Time']
 
@@ -80,13 +83,13 @@ def strategy_no_bets():
 def theo_prob(segment):
     return THEO_COUNTS.get(segment, 0) / THEO_TOTAL
 
-def hist_prob(full_history, segment, window=300):  # augmenté à 300
+def hist_prob(full_history, segment, window=300):
     if not full_history:
         return 0.0
     hist = full_history[-window:]
     return hist.count(segment) / len(hist)
 
-def combined_prob(full_history, segment, window=300):  # aussi 300 ici
+def combined_prob(full_history, segment, window=300):
     return 0.5 * (theo_prob(segment) + hist_prob(full_history, segment, window=window))
 
 def expected_value_for_strategy(mises, full_history, multiplicateur, bankroll):
@@ -188,6 +191,126 @@ if st.session_state.history:
     st.subheader("📋 Historique manuel actuel")
     df_manual = pd.DataFrame({"#": range(1,len(st.session_state.history)+1),"Résultat": st.session_state.history})
     st.dataframe(df_manual,use_container_width=True)
+
+# -----------------------------------
+# Sidebar: multiplicateur EV & bonus assumption
+# -----------------------------------
+st.sidebar.header("Paramètres")
+mult_for_ev_input = st.sidebar.number_input(
+    "Multiplicateur manuel (pour calculs EV)",
+    min_value=1, max_value=200,
+    value=st.session_state["mult_for_ev"], step=1
+)
+st.session_state["mult_for_ev"] = mult_for_ev_input
+
+bonus_ass = st.sidebar.number_input(
+    "Hypothèse multiplicateur bonus (EV)",
+    min_value=1, max_value=1000,
+    value=st.session_state.bonus_multiplier_assumption, step=1
+)
+st.session_state.bonus_multiplier_assumption = int(bonus_ass)
+
+# -----------------------------------
+# 🧮 SPINS LIVE
+# -----------------------------------
+st.title("🎡 Crazy Time Live Tracker")
+
+col1, col2 = st.columns(2)
+with col1:
+    spin_val = st.selectbox("🎯 Résultat du spin :", SEGMENTS)
+    mult_input = st.text_input("💥 Multiplicateur actuel (ex: x25 ou 25) :", "1")
+    multiplicateur = float(mult_input.lower().replace('x','')) if mult_input else 1
+
+with col2:
+    if st.button("🎰 Enregistrer le spin live"):
+        mises_for_spin = st.session_state.last_suggestion_mises or {}
+        strategy_name = st.session_state.last_suggestion_name or "No Bets"
+
+        gain_brut, gain_net = calcul_gain(mises_for_spin, spin_val, multiplicateur)
+        mise_total = sum(mises_for_spin.values()) if mises_for_spin else 0.0
+        new_bankroll = st.session_state.bankroll + gain_net
+
+        st.session_state.bankroll = new_bankroll
+        st.session_state.live_history.append(spin_val)
+        st.session_state.results_table.append({
+            "Spin #": len(st.session_state.results_table) + 1,
+            "Stratégie": strategy_name,
+            "Résultat": spin_val,
+            "Multiplicateur": multiplicateur,
+            "Mises $": {k: round(v,2) for k,v in (mises_for_spin or {}).items()},
+            "Mise Totale": round(mise_total,2),
+            "Gain Brut": round(gain_brut,2),
+            "Gain Net": round(gain_net,2),
+            "Bankroll": round(new_bankroll,2)
+        })
+
+        # ---- miss_streak logic ----
+        bet_segments = [s for s,v in (mises_for_spin or {}).items() if v and v>0]
+        if not bet_segments or spin_val not in bet_segments:
+            st.session_state.miss_streak += 1
+        else:
+            st.session_state.miss_streak = 0
+
+        # ---- martingale loss streak handling ----
+        if strategy_name == "Martingale 1":
+            if gain_net > 0:
+                st.session_state.martingale_1_loss_streak = 0
+                st.session_state.miss_streak = 0
+            else:
+                st.session_state.martingale_1_loss_streak += 1
+
+        # ---- Next suggestion logic ----
+        full_history = st.session_state.history + st.session_state.live_history
+        next_name, next_mises = choose_strategy_intelligent(full_history, st.session_state.bankroll, st.session_state["mult_for_ev"])
+        if st.session_state.miss_streak >= 3 and st.session_state.martingale_1_loss_streak == 0:
+            next_name, next_mises = strategy_martingale_1(st.session_state.bankroll, 0)
+        elif st.session_state.martingale_1_loss_streak > 0:
+            next_name, next_mises = strategy_martingale_1(st.session_state.bankroll, st.session_state.martingale_1_loss_streak)
+
+        st.session_state.last_suggestion_name = next_name
+        st.session_state.last_suggestion_mises = next_mises
+
+        display_next_suggestion()
+        st.success(f"Spin enregistré : {spin_val} x{multiplicateur} — Gain net: {round(gain_net,2)}$ — Bankroll: {round(new_bankroll,2)}$")
+
+# -----------------------------------
+# 🔁 SUPPRESSION DERNIER SPIN
+# -----------------------------------
+if st.button("🗑️ Supprimer dernier spin"):
+    if st.session_state.results_table:
+        popped = st.session_state.results_table.pop()
+        if st.session_state.live_history:
+            st.session_state.live_history.pop()
+        if st.session_state.martingale_1_loss_streak > 0:
+            st.session_state.martingale_1_loss_streak -= 1
+        if st.session_state.miss_streak > 0:
+            st.session_state.miss_streak -= 1
+        st.warning("Dernier spin supprimé.")
+        full_history = st.session_state.history + st.session_state.live_history
+        next_name, next_mises = choose_strategy_intelligent(full_history, st.session_state.bankroll, st.session_state["mult_for_ev"])
+        st.session_state.last_suggestion_name = next_name
+        st.session_state.last_suggestion_mises = next_mises
+        display_next_suggestion()
+
+# -----------------------------------
+# 📊 HISTORIQUE + GRAPHIQUE BANKROLL
+# -----------------------------------
+st.subheader("📈 Historique des Spins Live")
+if st.session_state.results_table:
+    df_results = pd.DataFrame(st.session_state.results_table)
+    st.dataframe(df_results, use_container_width=True)
+
+    st.subheader("💹 Évolution de la Bankroll")
+    fig, ax = plt.subplots()
+    ax.plot(df_results["Spin #"], df_results["Bankroll"], marker='o', label='Bankroll')
+    ax.axhline(y=st.session_state.initial_bankroll, color='gray', linestyle='--', label='Bankroll initiale')
+    ax.set_xlabel("Spin #")
+    ax.set_ylabel("Bankroll ($)")
+    ax.legend()
+    ax.grid(True)
+    st.pyplot(fig)
+else:
+    st.write("Aucun spin encore enregistré.")
 
 # -----------------------------------
 # 🧠 SIMULATION DU BOT SUR L’HISTORIQUE
