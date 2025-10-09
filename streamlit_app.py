@@ -74,9 +74,6 @@ def strategy_1_bonus(bankroll):
 def strategy_only_numbers(bankroll):
     return "Only Numbers", {'1': 3.0, '2': 2.0, '5': 1.0, '10': 1.0}
 
-def strategy_no_bets():
-    return "No Bets", {}
-
 # -----------------------------------
 # 🧠 UTILITAIRES PROBABILITÉS / EV
 # -----------------------------------
@@ -120,8 +117,7 @@ def choose_strategy_intelligent(full_history, bankroll, multiplicateur):
         ev = expected_value_for_strategy(mises, full_history, multiplicateur, bankroll)
         candidates.append((name, mises, ev))
     best = max(candidates, key=lambda x: x[2])
-    if best[2] <= 0:
-        return strategy_no_bets()
+    # Suppression du "No Bets" : on prend toujours la meilleure stratégie même si EV <= 0
     return best[0], best[1]
 
 # -----------------------------------
@@ -143,12 +139,9 @@ def calcul_gain(mises, spin_result, multiplicateur):
 # -----------------------------------
 def display_next_suggestion():
     st.subheader("🎯 Prochaine stratégie suggérée")
-    if st.session_state.last_suggestion_name:
+    if st.session_state.last_suggestion_name and st.session_state.last_suggestion_mises:
         st.write(f"**Stratégie :** {st.session_state.last_suggestion_name}")
-        if st.session_state.last_suggestion_mises:
-            st.table(pd.DataFrame.from_dict(st.session_state.last_suggestion_mises, orient='index', columns=['Mise $']))
-        else:
-            st.info("🚫 No Bets")
+        st.table(pd.DataFrame.from_dict(st.session_state.last_suggestion_mises, orient='index', columns=['Mise $']))
     else:
         st.write("Aucune stratégie suggérée pour l’instant.")
 
@@ -224,7 +217,7 @@ with col1:
 with col2:
     if st.button("🎰 Enregistrer le spin live"):
         mises_for_spin = st.session_state.last_suggestion_mises or {}
-        strategy_name = st.session_state.last_suggestion_name or "No Bets"
+        strategy_name = st.session_state.last_suggestion_name or "Unknown"
 
         gain_brut, gain_net = calcul_gain(mises_for_spin, spin_val, multiplicateur)
         mise_total = sum(mises_for_spin.values()) if mises_for_spin else 0.0
