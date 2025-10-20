@@ -1,4 +1,4 @@
-# streamlit_app_ev_live_toggle.py
+# streamlit_app_ev_live_toggle_final.py
 import streamlit as st
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -122,7 +122,7 @@ def display_next_suggestion():
         st.write("Aucune stratégie suggérée pour l’instant.")
 
 # -----------------------------------
-# 🔘 HISTORIQUE MANUEL
+# 🔘 HISTORIQUE MANUEL + affichage avant spins live
 # -----------------------------------
 st.header("📝 Historique Manuel")
 def segment_buttons_grid(segments, cols_per_row=4):
@@ -152,6 +152,15 @@ with col_c:
         st.session_state.last_suggestion_name = next_name
         st.session_state.last_suggestion_mises = next_mises
         display_next_suggestion()
+
+# ✅ Affichage tableau historique manuel avant spins live
+if st.session_state.show_history_table and st.session_state.history:
+    st.subheader("📋 Historique Manuel Actuel")
+    df_manual = pd.DataFrame({
+        "#": range(1, len(st.session_state.history)+1),
+        "Résultat": st.session_state.history
+    })
+    st.dataframe(df_manual, use_container_width=True)
 
 # -----------------------------------
 # Sidebar
